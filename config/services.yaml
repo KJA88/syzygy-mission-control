@@ -1,8 +1,8 @@
 schema_version: 1
 
 # Live inventory captured 2026-09-23.
-# Only values proven by machine-local inventory are filled in.
-# Public routes, tool counts, safe probe tools, and auth remain VERIFY_LIVE where not yet proven.
+# Catalog fingerprint = SHA-256 of sorted tool names joined with "\n" (UTF-8).
+# Public routes and auth remain VERIFY_LIVE where not yet proven.
 
 nodes:
   - id: pi
@@ -47,8 +47,6 @@ services:
     display_name: DHRAS Vision Service
     host: jetson
     required: false
-    # vision_service.py is live on :8081, but vision-hub.service was inactive during inventory.
-    # Treat process/HTTP health as authoritative until startup ownership is resolved.
     systemd_unit: vision-hub.service
     systemd_unit_authoritative: false
     process_match: /home/KA_JET/robotics/jetson-vision/vision_service.py
@@ -89,8 +87,21 @@ services:
     public_route_status: VERIFY_LIVE
     cloudflared_unit: cloudflared-fitbit-mcp.service
     public_required: false
-    expected_tools: VERIFY_LIVE
-    allowed_probe_tool: VERIFY_LIVE_SAFE_READ_ONLY_TOOL
+    expected_tools: 62
+    expected_tool_names_sha256: f20ce697b699a9ba816e566968096e58fbfcdaefcd26f6bdbdf0773e1473614f
+    allowed_probe_tool: get_fitbit_data_quality
+    probe:
+      type: mcp_initialize
+      protocol_version: "2024-11-05"
+      catalog_check: tools/list
+      catalog_mismatch_status: YELLOW
+      tool_calls_allowed: false
+      optional_functional_probe: get_fitbit_data_quality
+      functional_probe_enabled: false
+      server_info:
+        name: Fitbit Health MCP
+        version: ""
+      live_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 60
     auth_probe: off
@@ -108,6 +119,7 @@ services:
     cloudflared_unit: cloudflared-tv-mcp.service
     public_required: false
     expected_tools: 7
+    expected_tool_names_sha256: abf514587a1dca62fb3181c50d801d0b45220decab23faa844f4e42b7db6dcdb
     expected_tool_names:
       - tv_dashboard
       - tv_cable
@@ -116,8 +128,6 @@ services:
       - tv_wall_status
       - tv_wall_page
       - tv_off
-    # Live tools/list verified all registered tools are action/state-changing.
-    # Guardian therefore must not use tools/call for routine health ticks.
     allowed_probe_tool: null
     probe:
       type: mcp_initialize
@@ -146,12 +156,25 @@ services:
     systemd_unit: VERIFY_LIVE
     process_match: /home/KA_PI/git-audit-mcp/git-audit-mcp/server.py
     local_url: http://127.0.0.1:8000
-    mcp_path: VERIFY_LIVE
+    mcp_path: /mcp
     public_url: VERIFY_LIVE
     cloudflared_unit: cloudflared-pi-git-mcp.service
     public_required: false
-    expected_tools: VERIFY_LIVE
-    allowed_probe_tool: VERIFY_LIVE
+    expected_tools: 22
+    expected_tool_names_sha256: 50ff456a285f2c762490adaa31d7ddf4d84de1fd7539c34e69bd6a22d1a184ad
+    allowed_probe_tool: get_system_summary
+    probe:
+      type: mcp_initialize
+      protocol_version: "2024-11-05"
+      catalog_check: tools/list
+      catalog_mismatch_status: YELLOW
+      tool_calls_allowed: false
+      optional_functional_probe: get_system_summary
+      functional_probe_enabled: false
+      server_info:
+        name: Local Git Audit
+        version: ""
+      live_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 60
     auth_probe: off
@@ -165,12 +188,28 @@ services:
     systemd_unit: VERIFY_LIVE
     process_match: /home/KA_PI/polar-h10/mcp_server.py
     local_url: http://127.0.0.1:8030
-    mcp_path: VERIFY_LIVE
+    mcp_path: /mcp
     public_url: VERIFY_LIVE
     cloudflared_unit: cloudflared-polar-h10-mcp.service
     public_required: false
-    expected_tools: VERIFY_LIVE
-    allowed_probe_tool: VERIFY_LIVE
+    expected_tools: 4
+    expected_tool_names_sha256: d49cfb04d31a1fbeb4a27b2a9c5cac5b2f251d19c74f4a6f8a71097535afb602
+    expected_tool_names:
+      - get_polar_status
+      - get_polar_heart_rate
+      - get_polar_heart_rate_window
+      - get_polar_rr_intervals
+    allowed_probe_tool: null
+    probe:
+      type: mcp_initialize
+      protocol_version: "2024-11-05"
+      catalog_check: tools/list
+      catalog_mismatch_status: YELLOW
+      tool_calls_allowed: false
+      server_info:
+        name: Polar H10 MCP
+        version: ""
+      live_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 60
     auth_probe: off
