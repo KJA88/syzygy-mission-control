@@ -108,7 +108,16 @@ services:
     cloudflared_unit: cloudflared-tv-mcp.service
     public_required: false
     expected_tools: VERIFY_LIVE
-    allowed_probe_tool: VERIFY_LIVE
+    # Source review indicates every registered tv_* tool can produce a side effect.
+    # Guardian therefore must not use tools/call for routine health ticks.
+    allowed_probe_tool: null
+    probe:
+      type: mcp_initialize
+      protocol_version: "2024-11-05"
+      accept: "application/json, text/event-stream"
+      catalog_check: tools/list
+      catalog_mismatch_status: YELLOW
+      tool_calls_allowed: false
     timeout_s: 5
     interval_s: 30
     auth_probe: off
