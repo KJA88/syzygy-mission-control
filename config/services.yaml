@@ -1,0 +1,118 @@
+schema_version: 1
+
+nodes:
+  - id: pi
+    display_name: Raspberry Pi
+    required: false
+    agent: VERIFY_LIVE_PI_AGENT
+    host: VERIFY_LIVE_PI_LAN_IP
+    interval_s: 30
+
+  - id: jetson
+    display_name: Jetson
+    required: false
+    agent: VERIFY_LIVE_JETSON_AGENT
+    host: 192.168.1.17
+    host_status: VERIFY_LIVE_STILL_CURRENT
+    interval_s: 30
+
+services:
+  - id: dhras-dashboard
+    display_name: DHRAS Dashboard
+    host: jetson
+    required: false
+    systemd_unit: VERIFY_LIVE_STARTUP_METHOD
+    local_url: http://127.0.0.1:8080
+    health_url: http://127.0.0.1:8080/api/cameras/status
+    public_url: VERIFY_LIVE
+    public_required: false
+    timeout_s: 3
+    interval_s: 30
+    dependencies: [dhras-vision-service]
+
+  - id: dhras-vision-service
+    display_name: DHRAS Vision Service
+    host: jetson
+    required: false
+    systemd_unit: VERIFY_LIVE_STARTUP_METHOD
+    local_url: http://127.0.0.1:8081
+    health_url: http://127.0.0.1:8081/health
+    public_url: VERIFY_LIVE
+    public_required: false
+    timeout_s: 3
+    interval_s: 30
+    dependencies: []
+
+  - id: fitbit-mcp
+    display_name: Fitbit MCP
+    host: VERIFY_LIVE_RUNTIME_HOST
+    required: false
+    systemd_unit: VERIFY_LIVE
+    local_url: http://127.0.0.1:8010
+    mcp_path: VERIFY_LIVE_ROOT_OR_MCP
+    public_url: https://fitbit.syzygylab.net
+    public_required: false
+    expected_tools: VERIFY_LIVE
+    allowed_probe_tool: VERIFY_LIVE_SAFE_READ_ONLY_TOOL
+    timeout_s: 5
+    interval_s: 60
+    auth_probe: off
+    dependencies: []
+
+  - id: tv-mcp
+    display_name: TV MCP
+    host: VERIFY_LIVE
+    required: false
+    systemd_unit: VERIFY_LIVE
+    local_url: VERIFY_LIVE
+    public_url: VERIFY_LIVE
+    public_required: false
+    expected_tools: VERIFY_LIVE
+    allowed_probe_tool: VERIFY_LIVE
+    timeout_s: 5
+    interval_s: 30
+    auth_probe: off
+    dependencies: []
+
+  - id: pi-git-mcp
+    display_name: Pi Git Audit MCP
+    host: pi
+    required: false
+    systemd_unit: VERIFY_LIVE
+    local_url: VERIFY_LIVE
+    public_url: VERIFY_LIVE
+    public_required: false
+    expected_tools: VERIFY_LIVE
+    allowed_probe_tool: VERIFY_LIVE
+    timeout_s: 5
+    interval_s: 60
+    auth_probe: off
+    dependencies: []
+
+  - id: jetson-git-mcp
+    display_name: Jetson Git Audit MCP
+    host: jetson
+    required: false
+    systemd_unit: VERIFY_LIVE
+    local_url: VERIFY_LIVE
+    public_url: VERIFY_LIVE
+    public_required: false
+    expected_tools: VERIFY_LIVE
+    allowed_probe_tool: VERIFY_LIVE
+    timeout_s: 5
+    interval_s: 60
+    auth_probe: off
+    dependencies: []
+
+paths:
+  - id: cloudflare
+    display_name: Cloudflare Tunnel Inventory
+    required: false
+    unit: VERIFY_LIVE
+    routes: VERIFY_LIVE
+
+  - id: unified-mcp-portal
+    display_name: Unified MCP Portal
+    required: false
+    url: VERIFY_LIVE
+    catalog_behavior: VERIFY_LIVE
