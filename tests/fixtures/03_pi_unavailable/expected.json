@@ -1,0 +1,8 @@
+{
+  "status": "unknown",
+  "system": "unknown",
+  "layers": [
+    "host"
+  ],
+  "class": "HOST_AGENT_DOWN"
+}

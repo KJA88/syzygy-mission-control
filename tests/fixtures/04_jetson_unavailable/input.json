@@ -1,0 +1,9 @@
+{
+  "layers": {
+    "host": [
+      "red",
+      true,
+      "HOST_UNREACHABLE"
+    ]
+  }
+}

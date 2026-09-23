@@ -1,0 +1,13 @@
+{
+  "layers": {
+    "local_mcp": [
+      "green",
+      true
+    ],
+    "local_catalog": [
+      "yellow",
+      false,
+      "MCP_CATALOG_STALE"
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "layers": {
+    "local_mcp": [
+      "green",
+      true
+    ]
+  },
+  "previous": "red"
+}

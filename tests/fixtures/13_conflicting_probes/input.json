@@ -1,0 +1,13 @@
+{
+  "layers": {
+    "local_mcp": [
+      "green",
+      true
+    ],
+    "conflict": [
+      "yellow",
+      false,
+      "CONFLICTING_PROBES"
+    ]
+  }
+}

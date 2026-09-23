@@ -1,0 +1,13 @@
+{
+  "layers": {
+    "public_mcp": [
+      "green",
+      true
+    ],
+    "client_invoke": [
+      "red",
+      true,
+      "OAUTH_EXPIRED"
+    ]
+  }
+}

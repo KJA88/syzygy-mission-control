@@ -1,0 +1,13 @@
+{
+  "layers": {
+    "local_mcp": [
+      "green",
+      true
+    ],
+    "dependency": [
+      "red",
+      true,
+      "DEPENDENCY_OUTAGE"
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "status": "yellow",
+  "system": "yellow",
+  "layers": [
+    "local_mcp",
+    "conflict"
+  ],
+  "class": "CONFLICTING_PROBES"
+}

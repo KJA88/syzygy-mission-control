@@ -1,5 +1,12 @@
 schema_version: 1
 
+guardian:
+  interval_s: 30
+  agent_fresh_s: 60
+  agent_unknown_s: 90
+  heartbeat_unknown_s: 120
+  observation_unknown_s: 90
+
 # Live inventory captured 2026-09-23.
 # Catalog fingerprint = SHA-256 of sorted tool names joined with "\n" (UTF-8).
 # Public MCP routes below were protocol-tested with initialize + tools/list.
@@ -9,6 +16,9 @@ nodes:
     display_name: Raspberry Pi
     required: false
     agent: VERIFY_LIVE_PI_AGENT
+    agent_bind: 192.168.1.18
+    agent_port: 9071
+    agent_candidate_url: http://192.168.1.18:9071/health
     host: 192.168.1.18
     hostname: RasPi
     os: Debian GNU/Linux 13 (trixie)
@@ -20,6 +30,9 @@ nodes:
     display_name: Jetson
     required: false
     agent: VERIFY_LIVE_JETSON_AGENT
+    agent_bind: 192.168.1.17
+    agent_port: 9071
+    agent_candidate_url: http://192.168.1.17:9071/health
     host: 192.168.1.17
     hostname: Jetson
     os: Ubuntu 22.04.5 LTS
@@ -52,6 +65,16 @@ services:
     process_match: /home/KA_JET/robotics/jetson-vision/vision_service.py
     local_url: http://127.0.0.1:8081
     health_url: http://127.0.0.1:8081/health
+    cameras:
+      - id: frontyard
+        required: true
+        health_url: http://127.0.0.1:8081/status/frontyard
+      - id: backyard
+        required: true
+        health_url: http://127.0.0.1:8081/status/backyard
+      - id: indoor
+        required: true
+        health_url: http://127.0.0.1:8081/status/indoor
     public_url: VERIFY_LIVE
     public_required: false
     timeout_s: 3

@@ -1,0 +1,9 @@
+{
+  "layers": {
+    "local_mcp": [
+      "red",
+      true,
+      "TOOL_TIMEOUT"
+    ]
+  }
+}

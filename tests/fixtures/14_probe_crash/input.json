@@ -1,0 +1,10 @@
+{
+  "layers": {
+    "local_mcp": [
+      "unknown",
+      true,
+      "PROBE_CRASH"
+    ]
+  },
+  "crashed": true
+}

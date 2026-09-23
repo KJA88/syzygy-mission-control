@@ -1,0 +1,8 @@
+{
+  "status": "red",
+  "system": "red",
+  "layers": [
+    "local_service"
+  ],
+  "class": "SVC_INACTIVE"
+}

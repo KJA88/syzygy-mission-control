@@ -1,0 +1,9 @@
+{
+  "status": "red",
+  "system": "red",
+  "layers": [
+    "public_mcp",
+    "client_invoke"
+  ],
+  "class": "OAUTH_EXPIRED"
+}

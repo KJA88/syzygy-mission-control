@@ -1,0 +1,9 @@
+{
+  "layers": {
+    "local_service": [
+      "red",
+      true,
+      "SVC_INACTIVE"
+    ]
+  }
+}

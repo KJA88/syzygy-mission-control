@@ -1,6 +1,6 @@
 # Deterministic Guardian Fixtures
 
-Planned fixture cases for reducer/probe tests. No hardware calls.
+Implemented fixture cases for reducer/probe tests. No hardware calls.
 
 1. `01_all_healthy` — all required evidence fresh/pass -> green
 2. `02_guardian_heartbeat_stale` — hard-stale Guardian -> unknown
@@ -18,4 +18,7 @@ Planned fixture cases for reducer/probe tests. No hardware calls.
 14. `14_probe_crash` — Guardian probe crash -> overall unknown
 15. `15_recovery` — failed object returns to pass and emits `RECOVERED`/status-change event
 
-Each implemented fixture should contain input facts/config plus `expected.json` with reduced status/class and visible layer chips.
+Each fixture directory contains `input.json` facts and `expected.json` with reduced
+status/class, expected system status, and visible layer names. `tests/test_backend.py`
+executes all 15 as subtests. Additional tests cover freshness, auth-off behavior,
+per-camera health, session/catalog handling, durable writes, and real loopback SSE.

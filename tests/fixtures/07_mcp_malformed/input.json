@@ -1,0 +1,9 @@
+{
+  "layers": {
+    "local_mcp": [
+      "red",
+      true,
+      "MCP_MALFORMED"
+    ]
+  }
+}

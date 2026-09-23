@@ -1,0 +1,9 @@
+{
+  "layers": {
+    "local_port": [
+      "red",
+      true,
+      "PORT_CLOSED"
+    ]
+  }
+}

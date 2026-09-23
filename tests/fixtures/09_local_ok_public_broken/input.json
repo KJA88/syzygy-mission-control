@@ -1,0 +1,13 @@
+{
+  "layers": {
+    "local_mcp": [
+      "green",
+      true
+    ],
+    "public_mcp": [
+      "red",
+      false,
+      "TLS_FAIL"
+    ]
+  }
+}

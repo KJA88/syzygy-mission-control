@@ -1,0 +1,9 @@
+{
+  "status": "yellow",
+  "system": "yellow",
+  "layers": [
+    "local_mcp",
+    "local_catalog"
+  ],
+  "class": "MCP_CATALOG_STALE"
+}

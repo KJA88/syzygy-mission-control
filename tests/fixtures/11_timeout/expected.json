@@ -1,0 +1,8 @@
+{
+  "status": "red",
+  "system": "red",
+  "layers": [
+    "local_mcp"
+  ],
+  "class": "TOOL_TIMEOUT"
+}

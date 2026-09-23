@@ -1,0 +1,9 @@
+{
+  "layers": {
+    "host": [
+      "unknown",
+      true,
+      "HOST_AGENT_DOWN"
+    ]
+  }
+}

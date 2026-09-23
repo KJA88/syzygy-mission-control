@@ -1,0 +1,8 @@
+{
+  "status": "red",
+  "system": "red",
+  "layers": [
+    "local_port"
+  ],
+  "class": "PORT_CLOSED"
+}

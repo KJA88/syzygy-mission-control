@@ -1,0 +1,9 @@
+{
+  "status": "red",
+  "system": "red",
+  "layers": [
+    "local_mcp",
+    "dependency"
+  ],
+  "class": "DEPENDENCY_OUTAGE"
+}

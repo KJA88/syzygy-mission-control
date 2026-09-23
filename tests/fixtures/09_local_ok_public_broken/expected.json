@@ -1,0 +1,9 @@
+{
+  "status": "yellow",
+  "system": "yellow",
+  "layers": [
+    "local_mcp",
+    "public_mcp"
+  ],
+  "class": "TLS_FAIL"
+}
