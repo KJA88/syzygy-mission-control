@@ -1,27 +1,39 @@
 schema_version: 1
 
+# Live inventory captured 2026-09-23.
+# Only values proven by machine-local inventory are filled in.
+# Public routes, tool counts, safe probe tools, and auth remain VERIFY_LIVE where not yet proven.
+
 nodes:
   - id: pi
     display_name: Raspberry Pi
     required: false
     agent: VERIFY_LIVE_PI_AGENT
-    host: VERIFY_LIVE_PI_LAN_IP
+    host: 192.168.1.18
+    hostname: RasPi
+    os: Debian GNU/Linux 13 (trixie)
+    architecture: arm64
     interval_s: 30
+    verified_live: 2026-09-23
 
   - id: jetson
     display_name: Jetson
     required: false
     agent: VERIFY_LIVE_JETSON_AGENT
     host: 192.168.1.17
-    host_status: VERIFY_LIVE_STILL_CURRENT
+    hostname: Jetson
+    os: Ubuntu 22.04.5 LTS
+    architecture: arm64
+    hardware: NVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super
     interval_s: 30
+    verified_live: 2026-09-23
 
 services:
   - id: dhras-dashboard
     display_name: DHRAS Dashboard
     host: jetson
     required: false
-    systemd_unit: VERIFY_LIVE_STARTUP_METHOD
+    systemd_unit: vision-dashboard.service
     local_url: http://127.0.0.1:8080
     health_url: http://127.0.0.1:8080/api/cameras/status
     public_url: VERIFY_LIVE
@@ -29,12 +41,17 @@ services:
     timeout_s: 3
     interval_s: 30
     dependencies: [dhras-vision-service]
+    verified_live: 2026-09-23
 
   - id: dhras-vision-service
     display_name: DHRAS Vision Service
     host: jetson
     required: false
-    systemd_unit: VERIFY_LIVE_STARTUP_METHOD
+    # vision_service.py is live on :8081, but vision-hub.service was inactive during inventory.
+    # Treat process/HTTP health as authoritative until startup ownership is resolved.
+    systemd_unit: vision-hub.service
+    systemd_unit_authoritative: false
+    process_match: /home/KA_JET/robotics/jetson-vision/vision_service.py
     local_url: http://127.0.0.1:8081
     health_url: http://127.0.0.1:8081/health
     public_url: VERIFY_LIVE
@@ -42,29 +59,15 @@ services:
     timeout_s: 3
     interval_s: 30
     dependencies: []
+    verified_live: 2026-09-23
 
-  - id: fitbit-mcp
-    display_name: Fitbit MCP
-    host: VERIFY_LIVE_RUNTIME_HOST
+  - id: dhras-mcp
+    display_name: DHRAS MCP
+    host: jetson
     required: false
-    systemd_unit: VERIFY_LIVE
-    local_url: http://127.0.0.1:8010
-    mcp_path: VERIFY_LIVE_ROOT_OR_MCP
-    public_url: https://fitbit.syzygylab.net
-    public_required: false
-    expected_tools: VERIFY_LIVE
-    allowed_probe_tool: VERIFY_LIVE_SAFE_READ_ONLY_TOOL
-    timeout_s: 5
-    interval_s: 60
-    auth_probe: off
-    dependencies: []
-
-  - id: tv-mcp
-    display_name: TV MCP
-    host: VERIFY_LIVE
-    required: false
-    systemd_unit: VERIFY_LIVE
-    local_url: VERIFY_LIVE
+    systemd_unit: dhras-mcp.service
+    local_url: http://127.0.0.1:8020
+    mcp_path: VERIFY_LIVE
     public_url: VERIFY_LIVE
     public_required: false
     expected_tools: VERIFY_LIVE
@@ -72,15 +75,56 @@ services:
     timeout_s: 5
     interval_s: 30
     auth_probe: off
+    dependencies: [dhras-vision-service]
+    verified_live: 2026-09-23
+
+  - id: fitbit-mcp
+    display_name: Fitbit MCP
+    host: pi
+    required: false
+    systemd_unit: fitbit-mcp.service
+    local_url: http://127.0.0.1:8010
+    mcp_path: /mcp
+    public_url: https://fitbit.syzygylab.net
+    public_route_status: VERIFY_LIVE
+    cloudflared_unit: cloudflared-fitbit-mcp.service
+    public_required: false
+    expected_tools: VERIFY_LIVE
+    allowed_probe_tool: VERIFY_LIVE_SAFE_READ_ONLY_TOOL
+    timeout_s: 5
+    interval_s: 60
+    auth_probe: off
     dependencies: []
+    verified_live: 2026-09-23
+
+  - id: tv-mcp
+    display_name: TV MCP
+    host: pi
+    required: false
+    systemd_unit: tv-mcp.service
+    local_url: http://127.0.0.1:8065
+    mcp_path: /mcp
+    public_url: VERIFY_LIVE
+    cloudflared_unit: cloudflared-tv-mcp.service
+    public_required: false
+    expected_tools: VERIFY_LIVE
+    allowed_probe_tool: VERIFY_LIVE
+    timeout_s: 5
+    interval_s: 30
+    auth_probe: off
+    dependencies: []
+    verified_live: 2026-09-23
 
   - id: pi-git-mcp
     display_name: Pi Git Audit MCP
     host: pi
     required: false
     systemd_unit: VERIFY_LIVE
-    local_url: VERIFY_LIVE
+    process_match: /home/KA_PI/git-audit-mcp/git-audit-mcp/server.py
+    local_url: http://127.0.0.1:8000
+    mcp_path: VERIFY_LIVE
     public_url: VERIFY_LIVE
+    cloudflared_unit: cloudflared-pi-git-mcp.service
     public_required: false
     expected_tools: VERIFY_LIVE
     allowed_probe_tool: VERIFY_LIVE
@@ -88,14 +132,37 @@ services:
     interval_s: 60
     auth_probe: off
     dependencies: []
+    verified_live: 2026-09-23
+
+  - id: polar-h10-mcp
+    display_name: Polar H10 MCP
+    host: pi
+    required: false
+    systemd_unit: VERIFY_LIVE
+    process_match: /home/KA_PI/polar-h10/mcp_server.py
+    local_url: http://127.0.0.1:8030
+    mcp_path: VERIFY_LIVE
+    public_url: VERIFY_LIVE
+    cloudflared_unit: cloudflared-polar-h10-mcp.service
+    public_required: false
+    expected_tools: VERIFY_LIVE
+    allowed_probe_tool: VERIFY_LIVE
+    timeout_s: 5
+    interval_s: 60
+    auth_probe: off
+    dependencies: []
+    verified_live: 2026-09-23
 
   - id: jetson-git-mcp
     display_name: Jetson Git Audit MCP
     host: jetson
     required: false
     systemd_unit: VERIFY_LIVE
-    local_url: VERIFY_LIVE
+    process_match: /home/KA_JET/git-audit-mcp/git-audit-mcp/server.py
+    local_url: http://127.0.0.1:8000
+    mcp_path: VERIFY_LIVE
     public_url: VERIFY_LIVE
+    cloudflared_unit: cloudflared-jetson-git-mcp.service
     public_required: false
     expected_tools: VERIFY_LIVE
     allowed_probe_tool: VERIFY_LIVE
@@ -103,13 +170,30 @@ services:
     interval_s: 60
     auth_probe: off
     dependencies: []
+    verified_live: 2026-09-23
 
 paths:
-  - id: cloudflare
-    display_name: Cloudflare Tunnel Inventory
+  - id: cloudflare-pi
+    display_name: Pi Cloudflare Tunnel Inventory
+    host: pi
     required: false
-    unit: VERIFY_LIVE
+    units:
+      - cloudflared-fitbit-mcp.service
+      - cloudflared-pi-git-mcp.service
+      - cloudflared-polar-h10-mcp.service
+      - cloudflared-tv-mcp.service
     routes: VERIFY_LIVE
+    verified_live: 2026-09-23
+
+  - id: cloudflare-jetson
+    display_name: Jetson Cloudflare Tunnel Inventory
+    host: jetson
+    required: false
+    units:
+      - cloudflared-jetson-git-mcp.service
+      - cloudflared.service
+    routes: VERIFY_LIVE
+    verified_live: 2026-09-23
 
   - id: unified-mcp-portal
     display_name: Unified MCP Portal
