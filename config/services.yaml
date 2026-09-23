@@ -107,8 +107,16 @@ services:
     public_url: VERIFY_LIVE
     cloudflared_unit: cloudflared-tv-mcp.service
     public_required: false
-    expected_tools: VERIFY_LIVE
-    # Source review indicates every registered tv_* tool can produce a side effect.
+    expected_tools: 7
+    expected_tool_names:
+      - tv_dashboard
+      - tv_cable
+      - tv_set_input_state
+      - tv_wall_cameras
+      - tv_wall_status
+      - tv_wall_page
+      - tv_off
+    # Live tools/list verified all registered tools are action/state-changing.
     # Guardian therefore must not use tools/call for routine health ticks.
     allowed_probe_tool: null
     probe:
@@ -119,6 +127,7 @@ services:
       catalog_mismatch_status: YELLOW
       tool_calls_allowed: false
       live_initialize_verified: 2026-09-23T23:05:21Z
+      live_catalog_verified: 2026-09-23T23:07:00Z
       response_content_type: text/event-stream
       session_header: mcp-session-id
       server_info:
