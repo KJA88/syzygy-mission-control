@@ -2,7 +2,7 @@ schema_version: 1
 
 # Live inventory captured 2026-09-23.
 # Catalog fingerprint = SHA-256 of sorted tool names joined with "\n" (UTF-8).
-# Public routes and auth remain VERIFY_LIVE where not yet proven.
+# Public MCP routes below were protocol-tested with initialize + tools/list.
 
 nodes:
   - id: pi
@@ -66,7 +66,10 @@ services:
     systemd_unit: dhras-mcp.service
     local_url: http://127.0.0.1:8020
     mcp_path: /mcp
-    public_url: VERIFY_LIVE
+    public_url: https://dhras.syzygylab.net
+    public_mcp_path: /mcp
+    public_verified: 2026-09-23
+    cloudflared_unit: cloudflared.service
     public_required: false
     expected_tools: 16
     expected_tool_names_sha256: fdca659fffa3692afb7d29f8d4fded17bd4cf066c7d518941539e282c1b1b7b3
@@ -94,12 +97,14 @@ services:
       catalog_check: tools/list
       catalog_mismatch_status: YELLOW
       tool_calls_allowed: false
+      session_required: true
       optional_functional_probe: get_camera_status
       functional_probe_enabled: false
       server_info:
         name: DHRAS MCP
         version: ""
       live_catalog_verified: 2026-09-23
+      public_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 30
     auth_probe: off
@@ -114,7 +119,8 @@ services:
     local_url: http://127.0.0.1:8010
     mcp_path: /mcp
     public_url: https://fitbit.syzygylab.net
-    public_route_status: VERIFY_LIVE
+    public_mcp_path: /mcp
+    public_verified: 2026-09-23
     cloudflared_unit: cloudflared-fitbit-mcp.service
     public_required: false
     expected_tools: 62
@@ -126,12 +132,14 @@ services:
       catalog_check: tools/list
       catalog_mismatch_status: YELLOW
       tool_calls_allowed: false
+      session_required: false
       optional_functional_probe: get_fitbit_data_quality
       functional_probe_enabled: false
       server_info:
         name: Fitbit Health MCP
         version: ""
       live_catalog_verified: 2026-09-23
+      public_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 60
     auth_probe: off
@@ -145,7 +153,9 @@ services:
     systemd_unit: tv-mcp.service
     local_url: http://127.0.0.1:8065
     mcp_path: /mcp
-    public_url: VERIFY_LIVE
+    public_url: https://tv.syzygylab.net
+    public_mcp_path: /mcp
+    public_verified: 2026-09-23
     cloudflared_unit: cloudflared-tv-mcp.service
     public_required: false
     expected_tools: 7
@@ -166,8 +176,10 @@ services:
       catalog_check: tools/list
       catalog_mismatch_status: YELLOW
       tool_calls_allowed: false
+      session_required: true
       live_initialize_verified: 2026-09-23T23:05:21Z
       live_catalog_verified: 2026-09-23T23:07:00Z
+      public_catalog_verified: 2026-09-23
       response_content_type: text/event-stream
       session_header: mcp-session-id
       server_info:
@@ -183,11 +195,13 @@ services:
     display_name: Pi Git Audit MCP
     host: pi
     required: false
-    systemd_unit: VERIFY_LIVE
+    systemd_unit: git-audit-mcp.service
     process_match: /home/KA_PI/git-audit-mcp/git-audit-mcp/server.py
     local_url: http://127.0.0.1:8000
     mcp_path: /mcp
-    public_url: VERIFY_LIVE
+    public_url: https://pi-git.syzygylab.net
+    public_mcp_path: /mcp
+    public_verified: 2026-09-23
     cloudflared_unit: cloudflared-pi-git-mcp.service
     public_required: false
     expected_tools: 22
@@ -199,12 +213,14 @@ services:
       catalog_check: tools/list
       catalog_mismatch_status: YELLOW
       tool_calls_allowed: false
+      session_required: true
       optional_functional_probe: get_system_summary
       functional_probe_enabled: false
       server_info:
         name: Local Git Audit
         version: ""
       live_catalog_verified: 2026-09-23
+      public_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 60
     auth_probe: off
@@ -215,11 +231,13 @@ services:
     display_name: Polar H10 MCP
     host: pi
     required: false
-    systemd_unit: VERIFY_LIVE
+    systemd_unit: polar-h10-mcp.service
     process_match: /home/KA_PI/polar-h10/mcp_server.py
     local_url: http://127.0.0.1:8030
     mcp_path: /mcp
-    public_url: VERIFY_LIVE
+    public_url: https://polar.syzygylab.net
+    public_mcp_path: /mcp
+    public_verified: 2026-09-23
     cloudflared_unit: cloudflared-polar-h10-mcp.service
     public_required: false
     expected_tools: 4
@@ -236,10 +254,12 @@ services:
       catalog_check: tools/list
       catalog_mismatch_status: YELLOW
       tool_calls_allowed: false
+      session_required: false
       server_info:
         name: Polar H10 MCP
         version: ""
       live_catalog_verified: 2026-09-23
+      public_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 60
     auth_probe: off
@@ -250,11 +270,13 @@ services:
     display_name: Jetson Git Audit MCP
     host: jetson
     required: false
-    systemd_unit: VERIFY_LIVE
+    systemd_unit: git-audit-mcp.service
     process_match: /home/KA_JET/git-audit-mcp/git-audit-mcp/server.py
     local_url: http://127.0.0.1:8000
     mcp_path: /mcp
-    public_url: VERIFY_LIVE
+    public_url: https://jetson-git.syzygylab.net
+    public_mcp_path: /mcp
+    public_verified: 2026-09-23
     cloudflared_unit: cloudflared-jetson-git-mcp.service
     public_required: false
     expected_tools: 22
@@ -266,12 +288,14 @@ services:
       catalog_check: tools/list
       catalog_mismatch_status: YELLOW
       tool_calls_allowed: false
+      session_required: true
       optional_functional_probe: get_system_summary
       functional_probe_enabled: false
       server_info:
         name: Local Git Audit
         version: ""
       live_catalog_verified: 2026-09-23
+      public_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 60
     auth_probe: off
@@ -288,7 +312,11 @@ paths:
       - cloudflared-pi-git-mcp.service
       - cloudflared-polar-h10-mcp.service
       - cloudflared-tv-mcp.service
-    routes: VERIFY_LIVE
+    routes:
+      - https://fitbit.syzygylab.net/mcp
+      - https://pi-git.syzygylab.net/mcp
+      - https://polar.syzygylab.net/mcp
+      - https://tv.syzygylab.net/mcp
     verified_live: 2026-09-23
 
   - id: cloudflare-jetson
@@ -298,7 +326,9 @@ paths:
     units:
       - cloudflared-jetson-git-mcp.service
       - cloudflared.service
-    routes: VERIFY_LIVE
+    routes:
+      - https://jetson-git.syzygylab.net/mcp
+      - https://dhras.syzygylab.net/mcp
     verified_live: 2026-09-23
 
   - id: unified-mcp-portal
