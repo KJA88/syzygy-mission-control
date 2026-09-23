@@ -32,6 +32,13 @@ The browser is a renderer only. It never probes infrastructure directly.
 
 Overall health is reduced from components marked `required: true`. Missing or stale evidence blocks GREEN.
 
+## Run the backend
+
+See [deployment instructions](docs/DEPLOY.md) for Pi/Jetson installation, foreground
+commands, tests, freshness handling, and the remaining live verification boundaries.
+
+The backend is implemented in `agents/` and `guardian/`. Tests are hardware-independent.
+
 ## Evidence policy
 
 Repository-proven facts may be seeded into configuration. Anything that requires live verification remains marked `VERIFY_LIVE`. Do not replace verification markers with guesses.

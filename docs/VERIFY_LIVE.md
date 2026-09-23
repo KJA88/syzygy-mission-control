@@ -29,8 +29,11 @@ RoArm was discovered locally/publicly during inventory but remains explicitly ou
 
 ## Still VERIFY_LIVE / design work remaining
 
-- Pi local-agent endpoint and implementation
-- Jetson local-agent endpoint and implementation
+- Pi local-agent implementation complete; deploy and verify candidate `http://192.168.1.18:9071/health`
+- Jetson local-agent implementation complete; deploy and verify candidate `http://192.168.1.17:9071/health`
+- Verify LAN bind/port availability, systemd permissions, agent JSON freshness and restart recovery on both hosts
+- Verify one Guardian tick on Pi against both agents and all six public routes; compare per-camera output with DHRAS endpoints
+- Verify GPU utilization adapter on Jetson (currently reported as null), metric readability, and final alert thresholds
 - DHRAS vision startup ownership: `vision-hub.service` is enabled but was inactive while `vision_service.py` was live; determine whether startup is manual, `start.sh`, or another supervisor
 - DHRAS dashboard/vision public URLs if they are intended to be public separately from DHRAS MCP
 - unified MCP portal URL and catalog behavior
@@ -42,3 +45,11 @@ RoArm was discovered locally/publicly during inventory but remains explicitly ou
 The DHRAS vision service was running, but `frontyard` reported `online: false` while `backyard` and `indoor` reported `online: true`. Mission Control must preserve per-camera health and must not collapse the entire DHRAS vision service to GREEN solely because port `8081` is listening.
 
 Unknown fields remain `VERIFY_LIVE`; do not replace them with guessed or generated values.
+
+## Backend implementation validation
+
+The repository now includes local agents, protocol-only MCP probes, the reducer,
+atomic snapshot writes, append-only health events, deterministic fixture tests,
+and a systemd installer. See [DEPLOY.md](DEPLOY.md). Hardware deployment and new
+endpoint verification have not been performed by the implementation test suite.
+Candidate agent URLs are opt-in until verified; existing required flags are unchanged.
