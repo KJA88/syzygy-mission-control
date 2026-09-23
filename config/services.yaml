@@ -65,11 +65,41 @@ services:
     required: false
     systemd_unit: dhras-mcp.service
     local_url: http://127.0.0.1:8020
-    mcp_path: VERIFY_LIVE
+    mcp_path: /mcp
     public_url: VERIFY_LIVE
     public_required: false
-    expected_tools: VERIFY_LIVE
-    allowed_probe_tool: VERIFY_LIVE
+    expected_tools: 16
+    expected_tool_names_sha256: fdca659fffa3692afb7d29f8d4fded17bd4cf066c7d518941539e282c1b1b7b3
+    expected_tool_names:
+      - get_camera_status
+      - get_recent_events
+      - get_recent_person_events
+      - get_recent_vehicle_events
+      - get_recent_animal_events
+      - get_latest_detection
+      - get_latest_detection_image
+      - get_detection_count
+      - list_detection_images
+      - get_detection_image
+      - get_detection_summary
+      - get_detection_date_range
+      - get_detection_storage_usage
+      - get_detection_classes
+      - get_detection_cameras
+      - delete_detection_image
+    allowed_probe_tool: get_camera_status
+    probe:
+      type: mcp_initialize
+      protocol_version: "2024-11-05"
+      catalog_check: tools/list
+      catalog_mismatch_status: YELLOW
+      tool_calls_allowed: false
+      optional_functional_probe: get_camera_status
+      functional_probe_enabled: false
+      server_info:
+        name: DHRAS MCP
+        version: ""
+      live_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 30
     auth_probe: off
@@ -223,12 +253,25 @@ services:
     systemd_unit: VERIFY_LIVE
     process_match: /home/KA_JET/git-audit-mcp/git-audit-mcp/server.py
     local_url: http://127.0.0.1:8000
-    mcp_path: VERIFY_LIVE
+    mcp_path: /mcp
     public_url: VERIFY_LIVE
     cloudflared_unit: cloudflared-jetson-git-mcp.service
     public_required: false
-    expected_tools: VERIFY_LIVE
-    allowed_probe_tool: VERIFY_LIVE
+    expected_tools: 22
+    expected_tool_names_sha256: 50ff456a285f2c762490adaa31d7ddf4d84de1fd7539c34e69bd6a22d1a184ad
+    allowed_probe_tool: get_system_summary
+    probe:
+      type: mcp_initialize
+      protocol_version: "2024-11-05"
+      catalog_check: tools/list
+      catalog_mismatch_status: YELLOW
+      tool_calls_allowed: false
+      optional_functional_probe: get_system_summary
+      functional_probe_enabled: false
+      server_info:
+        name: Local Git Audit
+        version: ""
+      live_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 60
     auth_probe: off
