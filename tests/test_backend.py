@@ -33,11 +33,19 @@ class ReducerTests(unittest.TestCase):
                     self.assertTrue(any(e['class'] == 'RECOVERED' for e in changes(previous, current)))
 
     def test_required_public_failure_and_auth_off(self):
-        for required, expected in [(False, 'yellow'), (True, 'red')]:
+        for required, expected in [(False, 'green'), (True, 'red')]:
             obj = reduce_object('svc', True, {'local': fact('green', True, NOW, 't'), 'public': fact('red', required, NOW, 't')}, NOW, 't')
             self.assertEqual(obj['status'], expected)
         for required, expected in [(False, 'green'), (True, 'unknown')]:
             self.assertEqual(reduce_object('svc', True, {'auth': fact('unknown', required, NOW, 't')}, NOW, 't')['status'], expected)
+
+    def test_optional_yellow_still_marks_soft_degradation(self):
+        obj = reduce_object('svc', True, {
+            'local': fact('green', True, NOW, 't'),
+            'catalog': fact('yellow', False, NOW, 't', 'MCP_CATALOG_STALE'),
+        }, NOW, 't')
+        self.assertEqual(obj['status'], 'yellow')
+        self.assertEqual(obj['class'], 'MCP_CATALOG_STALE')
 
     def test_precedence_and_stale(self):
         objects = [fact('unknown', True, NOW, 't'), fact('red', True, NOW, 't')]
@@ -56,27 +64,26 @@ class AggregatorTests(unittest.TestCase):
         for evidence in ({}, {'pi': dict(observed_at=stamp(NOW - 91), services=[], paths=[])}):
             snapshot = build_snapshot(self.cfg, evidence, {}, NOW, 't')
             self.assertTrue(all(s['status'] == 'unknown' for s in snapshot['services']))
-            self.assertEqual(snapshot['system']['status'], 'green')  # Existing all-optional policy.
-        self.cfg['nodes'][0]['required'] = True
-        self.assertEqual(build_snapshot(self.cfg, {}, {}, NOW, 't')['system']['status'], 'unknown')
+            self.assertEqual(snapshot['system']['status'], 'unknown')
 
-    def test_camera_evidence_and_non_authoritative_unit(self):
+    def test_optional_frontyard_failure_does_not_degrade_required_vision(self):
         svc = next(s for s in self.cfg['services'] if s['id'] == 'dhras-vision-service')
-        layers = {name: fact('green', True, NOW, 't') for name in ('local_process', 'local_port', 'local_health')}
-        layers['local_service'] = fact('red', False, NOW, 't', 'SVC_INACTIVE')
+        layers = {name: fact('green', True, NOW, 't') for name in ('local_service', 'local_port', 'local_health')}
         for camera in svc['cameras']:
-            layers['camera/' + camera['id']] = camera_health({'online': camera['id'] != 'frontyard'}, True, 't')
+            layers['camera/' + camera['id']] = camera_health(
+                {'online': camera['id'] != 'frontyard'}, camera['required'], 't'
+            )
             layers['camera/' + camera['id']]['observed_at'] = stamp(NOW)
         evidence = {'jetson': dict(observed_at=stamp(NOW), services=[dict(id=svc['id'], layers=layers)], paths=[])}
         snapshot = build_snapshot(self.cfg, evidence, {}, NOW, 't')
         actual = next(s for s in snapshot['services'] if s['id'] == svc['id'])
-        self.assertEqual(actual['status'], 'red')
+        self.assertEqual(actual['status'], 'green')
+        self.assertTrue(actual['required'])
         self.assertEqual(actual['cameras']['frontyard']['status'], 'red')
+        self.assertFalse(actual['cameras']['frontyard']['required'])
         self.assertEqual(actual['cameras']['backyard']['status'], 'green')
-        self.assertFalse(actual['layers']['local_service']['required'])
-        layers['camera/frontyard']['status'] = 'green'
-        snapshot = build_snapshot(self.cfg, evidence, {}, NOW, 't')
-        self.assertEqual(next(s for s in snapshot['services'] if s['id'] == svc['id'])['status'], 'yellow')
+        self.assertEqual(actual['cameras']['indoor']['status'], 'green')
+        self.assertTrue(actual['layers']['local_service']['required'])
 
     def test_unknown_camera_is_not_online(self):
         for value in ({}, {'online': 'false'}, None):
