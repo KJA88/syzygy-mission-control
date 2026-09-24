@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import time
 from uuid import uuid4
+from .auth import auth_mcp
 from .config import load_config, configured_url
 from .model import age, fact, fresh, reduce_object, reduce_system, stamp, utcnow
 from .probes import http_json, mcp
@@ -47,8 +48,9 @@ def layer(observations, name, required, now, trace, max_age, host_stale=False):
     return item
 
 
-def build_snapshot(cfg, evidence, public, now, trace, crashed=False):
+def build_snapshot(cfg, evidence, public, now, trace, crashed=False, auth_evidence=None):
     policy = cfg.get('guardian', {})
+    auth_evidence = auth_evidence or {}
     nodes, services, paths, auth = [], [], [], []
     by_node = {}
     for node in cfg['nodes']:
@@ -90,11 +92,17 @@ def build_snapshot(cfg, evidence, public, now, trace, crashed=False):
             layers['public_mcp'] = layer(public_layers, 'public_mcp', service.get('public_required', False), now, trace, maximum)
             layers['public_catalog'] = layer(public_layers, 'public_catalog', False, now, trace, maximum)
             layers['public_tls'] = layer(public_layers, 'public_tls', service.get('public_required', False), now, trace, maximum)
-        layers['client_invoke'] = missing(service.get('auth_required', False), now, trace, 'AUTH_PROBE_OFF')
+        auth_required = bool(service.get('auth_required', False))
+        auth_raw = auth_evidence.get(service['id'])
+        if isinstance(auth_raw, dict):
+            auth_item = fresh(auth_raw, now, maximum)
+            auth_item['required'] = auth_required
+        else:
+            auth_item = missing(auth_required, now, trace, 'AUTH_PROBE_OFF')
+        layers['client_invoke'] = auth_item
         layers['portal_catalog'] = missing(False, now, trace, 'VERIFY_LIVE')
         services.append(reduce_object(service['id'], service['required'], layers, now, trace, host=service['host'], cameras=cameras))
-        auth.append(dict(layers['client_invoke'], id=service['id'], required=service['required'] and service.get('auth_required', False)))
-    # Dependencies are evaluated against direct evidence before propagation; no recursive cycles.
+        auth.append(dict(auth_item, id=service['id'], required=service['required'] and auth_required))
     direct = {s['id']: deepcopy(s) for s in services}
     for service, item in zip(cfg['services'], services):
         for dependency in service.get('dependencies', []):
@@ -130,15 +138,15 @@ class Guardian:
         trace, now = str(uuid4()), utcnow()
         selected = [s for s in self.cfg['services'] if 'probe' in s and configured_url(s.get('public_url'))]
         due = [s for s in selected if s['id'] not in self.public_cache or now - self.public_cache[s['id']][0] >= s['interval_s']]
-        with ThreadPoolExecutor(max_workers=10) as pool:
+        with ThreadPoolExecutor(max_workers=12) as pool:
             agent_jobs = {n['id']: pool.submit(agent_evidence, n, self.use_candidates, trace) for n in self.cfg['nodes']}
             public_jobs = {s['id']: pool.submit(mcp, s, s['public_url'].rstrip('/') + s['public_mcp_path'], s.get('public_required', False), trace) for s in due}
+            auth_jobs = {s['id']: pool.submit(auth_mcp, s, s['public_url'].rstrip('/') + s['public_mcp_path'], trace) for s in selected}
             evidence = {name: job.result() for name, job in agent_jobs.items()}
+            auth_evidence = {name: job.result() for name, job in auth_jobs.items()}
             for name, job in public_jobs.items():
                 health, catalog = job.result()
                 tls = deepcopy(health)
-                # A completed HTTPS application response proves TLS; network/timeout
-                # failures do not locate the failure to TLS without further evidence.
                 if health['class'] in ('TLS_FAIL', 'DNS_FAIL'):
                     tls.update(status='red')
                 elif health['status'] == 'green' or health['class'] in ('MCP_MALFORMED', 'PUBLIC_ENDPOINT_FAIL'):
@@ -148,10 +156,11 @@ class Guardian:
                 self.public_cache[name] = (now, {'public_mcp': health, 'public_catalog': catalog, 'public_tls': tls})
         public = {name: value[1] for name, value in self.public_cache.items()}
         crashed = any(layer.get('class') == 'PROBE_CRASH' for value in public.values() for layer in value.values())
+        crashed |= any(item.get('class') == 'PROBE_CRASH' for item in auth_evidence.values())
         for agent in evidence.values():
             if agent:
                 crashed |= any(layer.get('class') == 'PROBE_CRASH' for obj in agent['services'] for layer in obj.get('layers', {}).values())
-        return build_snapshot(self.cfg, evidence, public, utcnow(), trace, crashed)
+        return build_snapshot(self.cfg, evidence, public, utcnow(), trace, crashed, auth_evidence)
 
 
 def main():
