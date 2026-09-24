@@ -81,6 +81,84 @@ def service_observation(service, trace):
     return dict(id=service['id'], layers=layers, cameras=cameras)
 
 
+# Live-verified on Jetson Orin Nano (R36.4.7) 2026-09-23:
+#   /sys/devices/platform/bus@0/17000000.gpu/load  (world-readable; millipercent 0-1000)
+#   tegrastats GR3D_FREQ N% as fallback
+# nvidia-smi utilization is N/A on this board — do not use it.
+GPU_LOAD_HINTS = (
+    '/sys/devices/platform/bus@0/17000000.gpu/load',
+    '/sys/devices/platform/gpu.0/load',
+    '/sys/devices/gpu.0/load',
+)
+
+
+def _read_sysfs_gpu_load(path):
+    """Parse a Jetson GPU load sysfs node into 0-100, or None."""
+    try:
+        raw = Path(path).read_text().strip()
+        if not raw:
+            return None
+        number = float(raw.split()[0])
+    except (OSError, ValueError, TypeError, IndexError):
+        return None
+    # Tegra load is conventionally millipercent (0-1000). Some nodes publish 0-100.
+    if 0 <= number <= 100:
+        return round(number, 1)
+    if 0 <= number <= 1000:
+        return round(number / 10.0, 1)
+    return None
+
+
+def _read_tegrastats_gpu():
+    """One tegrastats sample: GR3D_FREQ N% → float, or None."""
+    import re
+    tegrastats = shutil.which('tegrastats')
+    if not tegrastats:
+        return None
+    output = ''
+    try:
+        subprocess.run(
+            [tegrastats, '--interval', '500'],
+            capture_output=True, text=True, timeout=2.0, check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ''
+        stderr = exc.stderr or ''
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode('utf-8', 'replace')
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode('utf-8', 'replace')
+        output = stdout + stderr
+    except OSError:
+        return None
+    match = re.search(r'GR3D_FREQ\s+(\d+(?:\.\d+)?)%', output)
+    if not match:
+        return None
+    value = float(match.group(1))
+    if 0 <= value <= 100:
+        return round(value, 1)
+    return None
+
+
+def gpu_utilization_percent():
+    """Return 0-100 float from Jetson evidence, else None. Never invent."""
+    for hint in GPU_LOAD_HINTS:
+        value = _read_sysfs_gpu_load(hint)
+        if value is not None:
+            return value
+    try:
+        for path in Path('/sys/devices').rglob('load'):
+            text_path = str(path).lower()
+            if 'gpu' not in text_path and 'gr3d' not in text_path:
+                continue
+            value = _read_sysfs_gpu_load(path)
+            if value is not None:
+                return value
+    except OSError:
+        pass
+    return _read_tegrastats_gpu()
+
+
 def metrics():
     value = {'cpu_load_1m': None, 'ram_available_bytes': None, 'disk_free_bytes': shutil.disk_usage('/').free,
              'temperature_c': None, 'gpu_utilization_percent': None}
@@ -98,6 +176,7 @@ def metrics():
             continue
     if temps:
         value['temperature_c'] = max(temps)
+    value['gpu_utilization_percent'] = gpu_utilization_percent()
     return value
 
 

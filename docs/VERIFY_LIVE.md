@@ -33,7 +33,7 @@ RoArm was discovered locally/publicly during inventory but remains explicitly ou
 - Jetson local-agent implementation complete; deploy and verify candidate `http://192.168.1.17:9071/health`
 - Verify LAN bind/port availability, systemd permissions, agent JSON freshness and restart recovery on both hosts
 - Verify one Guardian tick on Pi against both agents and all six public routes; compare per-camera output with DHRAS endpoints
-- Verify GPU utilization adapter on Jetson (currently reported as null), metric readability, and final alert thresholds
+- [done 2026-09-23] Verify GPU utilization adapter on Jetson — sysfs load millipercent + tegrastats fallback; alert thresholds still TBD
 - DHRAS vision startup ownership: `vision-hub.service` is enabled but was inactive while `vision_service.py` was live; determine whether startup is manual, `start.sh`, or another supervisor
 - DHRAS dashboard/vision public URLs if they are intended to be public separately from DHRAS MCP
 - unified MCP portal URL and catalog behavior
@@ -65,7 +65,7 @@ Resolved / live now:
 Still open (unchanged intent):
 
 - [done 2026-09-23] Promote agents off `--use-candidate-agents` — `agent` URLs set to live `/health` endpoints; flag removed from installer
-- Jetson GPU utilization adapter (still null)
+- [done 2026-09-23] Jetson GPU utilization adapter — sysfs `17000000.gpu/load` (+ tegrastats GR3D_FREQ fallback)
 - DHRAS vision startup ownership (`vision-hub.service` vs `start.sh`)
 - Dedicated Guardian auth probe identity (auth stays `AUTH_PROBE_OFF` / UNKNOWN)
 - Final required vs optional policy before production reduction
@@ -78,3 +78,10 @@ Still open (unchanged intent):
 - Jetson agent verified: `http://192.168.1.17:9071/health` → written to `nodes.jetson.agent`
 - `scripts/install.sh` Guardian unit no longer passes `--use-candidate-agents`
 - Live Pi unit still needs one `sudo` rewrite/restart to drop the flag (owner paste)
+
+## Status update 2026-09-23 (Jetson GPU adapter)
+
+- Live evidence: `/sys/devices/platform/bus@0/17000000.gpu/load` world-readable; `tegrastats` shows `GR3D_FREQ N%`
+- `nvidia-smi --query-gpu=utilization.gpu` returns `N/A` on this board — not used
+- Agent `metrics.gpu_utilization_percent` reads sysfs first (0-1000 → %), else tegrastats; remains null if neither works (e.g. Pi)
+- Alert thresholds for GPU still TBD (not set in this change)

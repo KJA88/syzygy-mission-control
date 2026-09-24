@@ -117,7 +117,7 @@ dependents inherit the classified dependency failure. This does not alter the ex
 optional status of the service at system level.
 
 The agent reports CPU load, available RAM, free disk, and thermal sensors when readable.
-GPU utilization is explicitly null pending the Jetson metric adapter. No missing metric
+GPU utilization is read on Jetson from sysfs `.../17000000.gpu/load` (millipercent) with tegrastats `GR3D_FREQ` fallback; remains null when no evidence exists (e.g. Pi). No missing metric
 is fabricated. Auth sessions, tool invocation history, and operator activity ingestion
 are not implemented; activity currently contains health status transitions only.
 
