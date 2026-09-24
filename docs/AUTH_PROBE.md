@@ -70,6 +70,24 @@ TV remains `auth_required: false`; RoArm remains out of scope.
 
 ## Deploy
 
+### Batch rollout
+
+All six in-scope MCP services now enable `guardian_identity` with a 10-second
+auth budget and explicit `auth_required: false`. DHRAS, Fitbit, Pi Git Audit,
+Polar H10, and Jetson Git Audit use their configured direct public MCP routes
+via the auth URL fallback. They retain their own protocol and session settings.
+TV retains its verified portal override. Normal health timeouts remain 5 seconds.
+
+Direct-route enablement is not a claim of successful authentication: the
+Cloudflare application for each hostname must accept the dedicated Guardian
+identity. A denied route reports `AUTH_DENIED` without blocking system health.
+No Access policy is changed by this rollout, and no credentials are copied into
+configuration. TV portal success does not establish access to the other routes.
+RoArm, the vision service, and the dashboard are not added to auth probing.
+
+Deploy this batch once, restart Guardian once, and inspect all six auth entries
+in the next fresh snapshot. Any access-policy gaps can then be handled together.
+
 From the Pi checkout:
 
 ```bash

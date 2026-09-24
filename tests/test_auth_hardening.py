@@ -181,6 +181,42 @@ class AuthHardeningTests(unittest.TestCase):
                                  else 'https://tv.example/mcp')
                 self.assertEqual(auth.call_count, 1)
 
+    def test_batch_enables_exactly_six_read_only_nonblocking_auth_routes(self):
+        cfg = load_config(Path(__file__).resolve().parents[1] / 'config/services.yaml')
+        services = [s for s in cfg['services'] if 'probe' in s]
+        self.assertEqual({s['id'] for s in services}, {
+            'dhras-mcp', 'fitbit-mcp', 'tv-mcp', 'pi-git-mcp',
+            'polar-h10-mcp', 'jetson-git-mcp'})
+        for service in services:
+            with self.subTest(service=service['id']):
+                self.assertEqual(service['auth_probe'], 'guardian_identity')
+                self.assertEqual(service['auth_timeout_s'], 10)
+                self.assertEqual(service['timeout_s'], 5)
+                self.assertIs(service['auth_required'], False)
+                self.assertIs(service['probe']['tool_calls_allowed'], False)
+                self.assertFalse(service['probe'].get('functional_probe_enabled', False))
+                if service['id'] != 'tv-mcp':
+                    self.assertNotIn('auth_url', service)
+                    self.assertNotIn('auth_protocol_version', service)
+                    self.assertNotIn('auth_session_required', service)
+                calls = []
+
+                def transport(url, timeout, payload, headers, rpc_id):
+                    calls.append(payload['method'])
+                    return reply(payload), {'Mcp-Session-Id': 'session'}
+
+                health = auth_mcp(service, service.get('auth_url') or
+                                  service['public_url'] + service['public_mcp_path'],
+                                  'batch-test', ENV, transport)
+                self.assertEqual(health['status'], 'green')
+                self.assertFalse(health['required'])
+                self.assertEqual(calls, ['initialize', 'notifications/initialized', 'tools/list'])
+                missing = auth_mcp(service, service['public_url'], 'batch-test', {})
+                self.assertEqual(missing['class'], 'AUTH_PROBE_OFF')
+                self.assertFalse(missing['required'])
+        self.assertTrue(all(s.get('auth_probe', 'off') == 'off'
+                            for s in cfg['services'] if 'probe' not in s))
+
 
 if __name__ == '__main__':
     unittest.main()
