@@ -141,7 +141,12 @@ class Guardian:
         with ThreadPoolExecutor(max_workers=12) as pool:
             agent_jobs = {n['id']: pool.submit(agent_evidence, n, self.use_candidates, trace) for n in self.cfg['nodes']}
             public_jobs = {s['id']: pool.submit(mcp, s, s['public_url'].rstrip('/') + s['public_mcp_path'], s.get('public_required', False), trace) for s in due}
-            auth_jobs = {s['id']: pool.submit(auth_mcp, s, s['public_url'].rstrip('/') + s['public_mcp_path'], trace) for s in selected}
+            auth_jobs = {}
+            for s in selected:
+                auth_url = s.get('auth_url')
+                if not configured_url(auth_url):
+                    auth_url = s['public_url'].rstrip('/') + s['public_mcp_path']
+                auth_jobs[s['id']] = pool.submit(auth_mcp, s, auth_url, trace)
             evidence = {name: job.result() for name, job in agent_jobs.items()}
             auth_evidence = {name: job.result() for name, job in auth_jobs.items()}
             for name, job in public_jobs.items():
