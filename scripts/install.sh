@@ -7,8 +7,6 @@ case "$root" in *[[:space:]]*) echo 'Install from a repository path without whit
 account="$(id -un)"
 if [[ "$account" == root ]]; then echo 'Run as your normal login user; sudo is used for unit installation only' >&2; exit 2; fi
 cd "$root"
-# The Jetson login may have its vision environment activated. Guardian uses
-# the distro interpreter and its own environment, including under systemd.
 unset PYTHONHOME PYTHONPATH VIRTUAL_ENV
 /usr/bin/python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
@@ -46,6 +44,7 @@ Wants=network-online.target syzygy-agent.service
 Type=simple
 User=$account
 WorkingDirectory=$root
+EnvironmentFile=-/etc/syzygy/guardian-auth.env
 ExecStart=$root/.venv/bin/python -m guardian.aggregator --state-dir $root/state
 Restart=on-failure
 RestartSec=5
