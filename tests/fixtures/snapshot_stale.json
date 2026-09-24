@@ -1,0 +1,329 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-24T01:51:34.417700Z",
+  "trace_id": "syz-fixture-ui-stale",
+  "guardian": {
+    "status": "green",
+    "required": true,
+    "observed_at": "2026-09-24T01:51:34.417700Z",
+    "observation_age_s": 0,
+    "trace_id": "syz-fixture-ui-v01",
+    "class": null,
+    "heartbeat_at": "2026-09-24T01:48:34.417700Z",
+    "last_run_result": "ok"
+  },
+  "system": {
+    "status": "green",
+    "reason": null
+  },
+  "nodes": [
+    {
+      "id": "pi",
+      "status": "green",
+      "required": false,
+      "observed_at": "2026-09-24T01:51:26.417700Z",
+      "observation_age_s": 8,
+      "trace_id": "syz-fixture-ui-v01",
+      "class": null,
+      "metrics": {
+        "cpu_load_1m": 0.35,
+        "ram_available_bytes": 2100000000,
+        "disk_free_bytes": 28000000000,
+        "temperature_c": 47.2,
+        "gpu_utilization_percent": null
+      }
+    },
+    {
+      "id": "jetson",
+      "status": "yellow",
+      "required": false,
+      "observed_at": "2026-09-24T01:51:26.417700Z",
+      "observation_age_s": 8,
+      "trace_id": "syz-fixture-ui-v01",
+      "class": "AGENT_LATE",
+      "metrics": {
+        "cpu_load_1m": 1.12,
+        "ram_available_bytes": 3400000000,
+        "disk_free_bytes": 40000000000,
+        "temperature_c": 52.0,
+        "gpu_utilization_percent": null
+      }
+    }
+  ],
+  "services": [
+    {
+      "id": "tv-mcp",
+      "status": "green",
+      "required": false,
+      "host": "pi",
+      "class": null,
+      "layers": {
+        "host": {
+          "status": "green",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        },
+        "local_service": {
+          "status": "green",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        },
+        "local_port": {
+          "status": "green",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        },
+        "local_mcp": {
+          "status": "green",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        },
+        "public_mcp": {
+          "status": "green",
+          "required": false,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        },
+        "public_tls": {
+          "status": "green",
+          "required": false,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        },
+        "client_invoke": {
+          "status": "unknown",
+          "required": false,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": "AUTH_PROBE_OFF"
+        },
+        "portal_catalog": {
+          "status": "unknown",
+          "required": false,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": "VERIFY_LIVE"
+        }
+      },
+      "cameras": {}
+    },
+    {
+      "id": "dhras-vision-service",
+      "status": "yellow",
+      "required": false,
+      "host": "jetson",
+      "class": null,
+      "layers": {
+        "host": {
+          "status": "yellow",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": "AGENT_LATE"
+        },
+        "local_service": {
+          "status": "green",
+          "required": false,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        },
+        "local_port": {
+          "status": "green",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        },
+        "local_health": {
+          "status": "green",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        },
+        "client_invoke": {
+          "status": "unknown",
+          "required": false,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": "AUTH_PROBE_OFF"
+        }
+      },
+      "cameras": {
+        "frontyard": {
+          "status": "green",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        },
+        "backyard": {
+          "status": "green",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        },
+        "indoor": {
+          "status": "yellow",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": "CAMERA_SOFT"
+        }
+      }
+    },
+    {
+      "id": "fitbit-mcp",
+      "status": "unknown",
+      "required": false,
+      "host": "pi",
+      "class": "HOST_AGENT_DOWN",
+      "layers": {
+        "host": {
+          "status": "unknown",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": "HOST_AGENT_DOWN"
+        },
+        "local_service": {
+          "status": "unknown",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": "HOST_AGENT_DOWN"
+        },
+        "local_mcp": {
+          "status": "unknown",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": "HOST_AGENT_DOWN"
+        },
+        "client_invoke": {
+          "status": "unknown",
+          "required": false,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": "AUTH_PROBE_OFF"
+        }
+      },
+      "cameras": {}
+    }
+  ],
+  "paths": [
+    {
+      "id": "cloudflare-pi",
+      "status": "green",
+      "required": false,
+      "class": null,
+      "layers": {
+        "cloudflared-tv-mcp.service": {
+          "status": "green",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        },
+        "cloudflared-fitbit-mcp.service": {
+          "status": "green",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": null
+        }
+      }
+    },
+    {
+      "id": "unified-mcp-portal",
+      "status": "unknown",
+      "required": false,
+      "class": "VERIFY_LIVE",
+      "layers": {
+        "portal_catalog": {
+          "status": "unknown",
+          "required": true,
+          "observed_at": "2026-09-24T01:51:26.417700Z",
+          "observation_age_s": 8,
+          "trace_id": "syz-fixture-ui-v01",
+          "class": "VERIFY_LIVE"
+        }
+      }
+    }
+  ],
+  "auth": [
+    {
+      "id": "tv-mcp",
+      "status": "unknown",
+      "required": false,
+      "class": "AUTH_PROBE_OFF",
+      "observed_at": "2026-09-24T01:51:26.417700Z",
+      "observation_age_s": 8,
+      "trace_id": "syz-fixture-ui-v01"
+    },
+    {
+      "id": "fitbit-mcp",
+      "status": "unknown",
+      "required": false,
+      "class": "AUTH_PROBE_OFF",
+      "observed_at": "2026-09-24T01:51:26.417700Z",
+      "observation_age_s": 8,
+      "trace_id": "syz-fixture-ui-v01"
+    }
+  ],
+  "activity": [
+    {
+      "schema_version": 1,
+      "ts": "2026-09-24T01:51:34.417700Z",
+      "trace_id": "syz-fixture-ui-v01",
+      "host": "pi",
+      "component": "services/tv-mcp",
+      "event_type": "status_change",
+      "severity": "info",
+      "operation": "health_probe",
+      "operator": "guardian",
+      "duration_ms": null,
+      "result": "green",
+      "class": "RECOVERED",
+      "message": "services/tv-mcp status changed",
+      "data": {
+        "before": "yellow",
+        "after": "green"
+      }
+    }
+  ]
+}

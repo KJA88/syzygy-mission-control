@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SYZYGY Mission Control V0.1</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="scanlines" aria-hidden="true"></div>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">SYZYGY</span>
+      <span class="brand-sub">Mission Control · V0.1 · read-only</span>
+    </div>
+    <div class="topbar-meta">
+      <span id="clock" class="mono">--</span>
+      <span id="refresh-badge" class="pill muted">refresh --</span>
+      <span id="fetch-error" class="pill red hidden"></span>
+    </div>
+  </header>
+
+  <section id="guardian-strip" class="guardian-strip card">
+    <div class="strip-item">
+      <div class="label">Guardian</div>
+      <div id="g-status" class="status-chip UNKNOWN">UNKNOWN</div>
+    </div>
+    <div class="strip-item">
+      <div class="label">Heartbeat</div>
+      <div id="g-heartbeat" class="mono value">—</div>
+    </div>
+    <div class="strip-item">
+      <div class="label">Age</div>
+      <div id="g-age" class="mono value">—</div>
+    </div>
+    <div class="strip-item">
+      <div class="label">Last run</div>
+      <div id="g-run" class="mono value">—</div>
+    </div>
+    <div class="strip-item wide">
+      <div class="label">Trace</div>
+      <div id="g-trace" class="mono value trunc">—</div>
+    </div>
+  </section>
+
+  <section class="system-row">
+    <article class="card system-card">
+      <div class="card-head">
+        <h2>System</h2>
+        <div id="sys-status" class="status-chip UNKNOWN">UNKNOWN</div>
+      </div>
+      <p id="sys-reason" class="reason">Waiting for Guardian snapshot…</p>
+      <p class="hint">
+        System GREEN only reflects <strong>required</strong> objects. Optional services can still be
+        RED/YELLOW/UNKNOWN — always read the cards below.
+      </p>
+    </article>
+  </section>
+
+  <main class="grid">
+    <section class="card">
+      <div class="card-head"><h2>Nodes</h2><span class="count" id="nodes-count">0</span></div>
+      <div id="nodes" class="cards-row"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Services</h2><span class="count" id="services-count">0</span></div>
+      <div id="services" class="cards-grid"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Paths</h2><span class="count" id="paths-count">0</span></div>
+      <div id="paths" class="cards-row"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Auth</h2>
+        <span class="pill muted">probe off → honest UNKNOWN</span>
+      </div>
+      <div id="auth" class="cards-row"></div>
+    </section>
+
+    <section class="card activity-card">
+      <div class="card-head"><h2>Activity</h2><span class="count" id="activity-count">last 20</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time (PT)</th>
+              <th>Sev</th>
+              <th>Component</th>
+              <th>Result</th>
+              <th>Class</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody id="activity-body">
+            <tr><td colspan="6" class="empty">No events yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Renderer only · local Guardian files · no MCP / Cloudflare / host probes from the browser</span>
+    <span id="served-meta" class="mono muted"></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
