@@ -7,7 +7,10 @@ case "$root" in *[[:space:]]*) echo 'Install from a repository path without whit
 account="$(id -un)"
 if [[ "$account" == root ]]; then echo 'Run as your normal login user; sudo is used for unit installation only' >&2; exit 2; fi
 cd "$root"
-python3 -m venv .venv
+# The Jetson login may have its vision environment activated. Guardian uses
+# the distro interpreter and its own environment, including under systemd.
+unset PYTHONHOME PYTHONPATH VIRTUAL_ENV
+/usr/bin/python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -m unittest discover -s tests -v
 mkdir -p state

@@ -1,6 +1,8 @@
 # Guardian V0.1 deployment
 
 Python 3.10+ and python3-venv are required. Run as the normal Pi/Jetson login user.
+The installer uses `/usr/bin/python3` so an activated Jetson vision environment
+does not become Guardian's base interpreter.
 Install the Jetson first, then Pi. Guardian runs on Pi. All configuration is in
 `config/services.yaml`; no unit names, service URLs, or tool catalogs are discovered or guessed.
 
@@ -14,7 +16,7 @@ git pull --ff-only
 sudo apt-get update
 sudo apt-get install -y python3-venv
 bash scripts/install.sh jetson
-curl --fail --max-time 5 http://192.168.1.17:9071/health
+curl --fail --retry 15 --retry-connrefused --retry-delay 2 --max-time 5 http://192.168.1.17:9071/health
 ```
 
 ## Pi
@@ -27,8 +29,8 @@ git pull --ff-only
 sudo apt-get update
 sudo apt-get install -y python3-venv
 bash scripts/install.sh pi
-curl --fail --max-time 5 http://192.168.1.18:9071/health
-curl --fail --max-time 5 http://192.168.1.17:9071/health
+curl --fail --retry 15 --retry-connrefused --retry-delay 2 --max-time 5 http://192.168.1.18:9071/health
+curl --fail --retry 15 --retry-connrefused --retry-delay 2 --max-time 5 http://192.168.1.17:9071/health
 sudo systemctl status syzygy-agent.service syzygy-guardian.service --no-pager
 .venv/bin/python -m guardian.inspect
 ```
@@ -43,6 +45,38 @@ unauthenticated agent endpoints through Cloudflare. No firewall or tunnel is cha
 The installer opts Guardian into `agent_candidate_url` using `--use-candidate-agents`.
 After both endpoints are verified, set each node's `agent` to its verified URL and remove
 the opt-in flag from the Guardian unit. Keep live-verification dates honest.
+
+## If APT stops on Cloudflare signing keys
+
+The 2026-09-23 deployment logs from both hosts stopped at `apt-get update` with
+`NO_PUBKEY` / missing signing keys. The Guardian installer had not run at that point.
+Cloudflare documents its signing-key rollover and current scoped keyring at
+[the official package repository](https://pkg.cloudflare.com/index.html).
+
+Refresh the official key and standard cloudflared source entry, then retry prerequisites:
+
+```bash
+(
+set -euo pipefail
+keyfile="$(mktemp)"
+trap 'rm -f "$keyfile"' EXIT
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o "$keyfile"
+test -s "$keyfile"
+sudo install -d -m 0755 /usr/share/keyrings
+sudo install -m 0644 "$keyfile" /usr/share/keyrings/cloudflare-main.gpg
+printf '%s\n' 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' |
+  sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null
+sudo apt-get update
+sudo apt-get install -y python3-venv
+)
+```
+
+This refreshes package metadata and installs the Python prerequisite; it does not
+upgrade or restart cloudflared. Keep signature verification enabled. If APT reports
+duplicate/conflicting source entries, inspect those entries before changing them.
+Then run the appropriate `bash scripts/install.sh jetson` or `bash scripts/install.sh pi`
+from the updated checkout. Agent startup completes an initial probe before binding;
+the retrying health requests above allow for that startup time.
 
 ## Foreground / one-shot operation
 
