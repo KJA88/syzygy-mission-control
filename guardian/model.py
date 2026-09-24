@@ -34,16 +34,19 @@ def fresh(item, now, max_age=90):
 
 
 def reduce_layers(layers):
-    """Reduce parent health from required layers only.
+    """Reduce parent health without letting optional hard failures block it.
 
-    Optional layers remain fully visible in the snapshot/UI but do not degrade the
-    parent object. This keeps parked/optional failures (for example frontyard or an
-    optional public path) from blocking an otherwise healthy required service.
+    Required RED/UNKNOWN/YELLOW evidence controls parent health. Optional RED or
+    UNKNOWN layers stay visible on their own chips/cards but do not degrade the
+    parent. Optional YELLOW remains a soft parent degradation for catalog drift
+    and unresolved conflicts.
     """
     required = [x for x in layers.values() if x['required']]
     for status in ('red', 'unknown', 'yellow'):
         if any(x['status'] == status for x in required):
             return status
+    if any(x['status'] == 'yellow' for x in layers.values() if not x['required']):
+        return 'yellow'
     return 'green'
 
 
@@ -66,5 +69,5 @@ def reduce_object(identifier, required, layers, now, trace, **extra):
                 if x['status'] == status and x.get('class')), None)
     if status == 'yellow' and cls is None:
         cls = next((x.get('class') for x in layers.values()
-                    if x['required'] and x['status'] in ('red', 'yellow') and x.get('class')), None)
+                    if x['status'] == 'yellow' and x.get('class')), None)
     return fact(status, required, now, trace, cls, id=identifier, layers=layers, **extra)
