@@ -107,3 +107,28 @@ The browser polls `/api/snapshot` and `/api/events?limit=20` about every 7 secon
 - Mutation or recovery buttons
 - Agent health endpoints called from the browser
 - Any network probe from UI or UI server except reading local files
+
+## systemd on Pi (survives reboot)
+
+Prefer the unit over a manual  launcher. After files are on disk:
+
+ 152640
+
+Fresh  also installs/enables this unit when the UI launcher exists.
+Do not publish port 9070 via Cloudflare.
+
+## systemd on Pi (survives reboot)
+
+Prefer the unit over a manual background launcher. After files are on disk:
+
+```bash
+cd ~/syzygy-mission-control
+fuser -k 9070/tcp 2>/dev/null || true
+sudo cp systemd/syzygy-mission-control.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now syzygy-mission-control.service
+curl -sS http://127.0.0.1:9070/api/health
+```
+
+Fresh `bash scripts/install.sh pi` also installs/enables this unit when the UI launcher exists.
+Do not publish port 9070 via Cloudflare.

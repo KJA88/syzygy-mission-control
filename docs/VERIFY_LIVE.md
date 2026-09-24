@@ -53,3 +53,21 @@ atomic snapshot writes, append-only health events, deterministic fixture tests,
 and a systemd installer. See [DEPLOY.md](DEPLOY.md). Hardware deployment and new
 endpoint verification have not been performed by the implementation test suite.
 Candidate agent URLs are opt-in until verified; existing required flags are unchanged.
+
+## Status update 2026-09-23 (Mission Control V0.1)
+
+Resolved / live now:
+
+- Pi agent `http://192.168.1.18:9071/health` and Jetson agent `http://192.168.1.17:9071/health` deployed; Guardian ticks on Pi
+- Mission Control UI on Pi: `http://192.168.1.18:9070/` (commit `8fd10cf`+); renderer-only against `state/snapshot.json`
+- Thermal metrics hotfix on Jetson (`6bde31e`); agents + guardian green in live snapshot
+
+Still open (unchanged intent):
+
+- Promote agents off `--use-candidate-agents` after writing verified `agent` URLs into `config/services.yaml`
+- Jetson GPU utilization adapter (still null)
+- DHRAS vision startup ownership (`vision-hub.service` vs `start.sh`)
+- Dedicated Guardian auth probe identity (auth stays `AUTH_PROBE_OFF` / UNKNOWN)
+- Final required vs optional policy before production reduction
+- Public MCP HTTP 403 without dedicated Access identity is expected; local probes remain trusted path
+- Frontyard camera offline until Ethernet coupler

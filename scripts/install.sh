@@ -57,6 +57,32 @@ PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 EOF
+
+sudo tee /etc/systemd/system/syzygy-mission-control.service >/dev/null <<EOF
+[Unit]
+Description=SYZYGY Mission Control V0.1 (LAN read-only UI)
+After=network-online.target syzygy-guardian.service
+Wants=network-online.target syzygy-guardian.service
+
+[Service]
+Type=simple
+User=$account
+WorkingDirectory=$root
+Environment=MC_HOST=0.0.0.0
+Environment=MC_PORT=9070
+Environment=MC_STATE_DIR=$root/state
+Environment=MC_UI_DIR=$root/ui
+Environment=MC_HARD_STALE_S=120
+ExecStart=$root/scripts/run-mission-control.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
 fi
 sudo systemctl daemon-reload
 sudo systemctl enable --now syzygy-agent.service
@@ -64,4 +90,8 @@ sudo systemctl restart syzygy-agent.service
 if [[ "$role" == pi ]]; then
   sudo systemctl enable --now syzygy-guardian.service
   sudo systemctl restart syzygy-guardian.service
+  if [[ -x "$root/scripts/run-mission-control.sh" ]]; then
+    sudo systemctl enable --now syzygy-mission-control.service
+    sudo systemctl restart syzygy-mission-control.service
+  fi
 fi

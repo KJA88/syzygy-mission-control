@@ -140,3 +140,29 @@ connectivity or supersede the original live inventory. Repeat the tick on Pi aft
 Tests use deterministic fixtures and local mock HTTP servers, not Pi/Jetson hardware.
 For service logs: `journalctl -u syzygy-agent -n 50 --no-pager` on either host and
 `journalctl -u syzygy-guardian -n 50 --no-pager` on Pi.
+
+## Mission Control UI (Pi only)
+
+LAN read-only UI on port 9070. After Guardian is up:
+
+Already up to date.
+
+Open  on LAN only. Do not publish  through Cloudflare.
+A fresh  writes/enables this unit when  is present.
+
+## Mission Control UI (Pi only)
+
+LAN read-only UI on port 9070. After Guardian is up:
+
+```bash
+cd ~/syzygy-mission-control
+git pull --ff-only
+fuser -k 9070/tcp 2>/dev/null || true
+sudo cp systemd/syzygy-mission-control.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now syzygy-mission-control.service
+curl --fail --retry 10 --retry-connrefused --retry-delay 1 --max-time 5 http://127.0.0.1:9070/api/health
+```
+
+Open `http://192.168.1.18:9070/` on LAN only. Do not publish `:9070` through Cloudflare.
+A fresh `bash scripts/install.sh pi` writes/enables this unit when `scripts/run-mission-control.sh` is present.

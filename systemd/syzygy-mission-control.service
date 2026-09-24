@@ -1,0 +1,27 @@
+[Unit]
+Description=SYZYGY Mission Control V0.1 (LAN read-only UI)
+Documentation=file:///home/KA_PI/syzygy-mission-control/docs/MISSION_CONTROL.md
+After=network-online.target syzygy-guardian.service
+Wants=network-online.target
+# Soft dependency: UI can start without Guardian (shows UNKNOWN/stale), but prefer after it.
+Wants=syzygy-guardian.service
+
+[Service]
+Type=simple
+User=KA_PI
+WorkingDirectory=/home/KA_PI/syzygy-mission-control
+Environment=MC_HOST=0.0.0.0
+Environment=MC_PORT=9070
+Environment=MC_STATE_DIR=/home/KA_PI/syzygy-mission-control/state
+Environment=MC_UI_DIR=/home/KA_PI/syzygy-mission-control/ui
+Environment=MC_HARD_STALE_S=120
+ExecStart=/home/KA_PI/syzygy-mission-control/scripts/run-mission-control.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+# UI is read-only against state/; no writes required.
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
