@@ -1,12 +1,21 @@
 # Guardian V0.1 deployment
 
-Python 3.10+ and python3-venv are required. Run as the normal Pi/Jetson login user.
-The installer uses `/usr/bin/python3` so an activated Jetson vision environment
-does not become Guardian's base interpreter.
-Install the Jetson first, then Pi. Guardian runs on Pi. All configuration is in
-`config/services.yaml`; no unit names, service URLs, or tool catalogs are discovered or guessed.
+Guardian V0.1 is deployed on the SYZYGY Pi/Jetson pair. Python 3.10+ and `python3-venv` are required. Run installation as the normal login user; the installer uses `/usr/bin/python3` so an activated Jetson vision environment cannot become Guardian's base interpreter.
 
-## Jetson
+## Live topology
+
+- Pi `RasPi` — `192.168.1.18`
+  - local agent: `http://192.168.1.18:9071/health`
+  - Guardian aggregator
+  - Mission Control UI: `http://192.168.1.18:9070/`
+- Jetson `Jetson` — `192.168.1.17`
+  - local agent: `http://192.168.1.17:9071/health`
+- DHRAS production vision owner: `vision-hub.service`
+- RoArm is out of scope for Mission Control V0.1.
+
+All runtime service definitions, requiredness, endpoints, intervals, and verified MCP catalogs come from `config/services.yaml`.
+
+## Install / refresh Jetson
 
 ```bash
 cd "$HOME"
@@ -19,7 +28,7 @@ bash scripts/install.sh jetson
 curl --fail --retry 15 --retry-connrefused --retry-delay 2 --max-time 5 http://192.168.1.17:9071/health
 ```
 
-## Pi
+## Install / refresh Pi
 
 ```bash
 cd "$HOME"
@@ -31,30 +40,113 @@ sudo apt-get install -y python3-venv
 bash scripts/install.sh pi
 curl --fail --retry 15 --retry-connrefused --retry-delay 2 --max-time 5 http://192.168.1.18:9071/health
 curl --fail --retry 15 --retry-connrefused --retry-delay 2 --max-time 5 http://192.168.1.17:9071/health
-sudo systemctl status syzygy-agent.service syzygy-guardian.service --no-pager
+sudo systemctl status syzygy-agent.service syzygy-guardian.service syzygy-mission-control.service --no-pager
 .venv/bin/python -m guardian.inspect
 ```
 
-The scripts install/restart only SYZYGY's new units. Agent port 9071 is a proposed
-deployment setting, not a previously verified live fact. Confirm it is free before
-installation (`ss -ltn 'sport = :9071'`). Agents bind only the configured LAN address,
-serve only cached `/health` JSON, and offer no command execution or control API.
-Restrict LAN access to trusted hosts with your existing firewall; do not publish these
-unauthenticated agent endpoints through Cloudflare. No firewall or tunnel is changed.
+The Pi installer installs/restarts the Pi agent, Guardian, and Mission Control systemd units. The Jetson installer installs/restarts only the Jetson agent. Agents expose cached read-only `/health` JSON on the LAN and provide no command-execution API. Do not publish ports `9070` or `9071` through Cloudflare.
 
-Agent endpoints were live-verified on 2026-09-23 and written into each node's `agent` field
-(`http://192.168.1.18:9071/health`, `http://192.168.1.17:9071/health`). The installer no longer
-passes `--use-candidate-agents`. Keep `agent_candidate_url` only as historical fallback notes;
-production Guardian uses `agent` alone. Keep live-verification dates honest.
+## Phase 1 health policy
 
-## If APT stops on Cloudflare signing keys
+Required for overall GREEN:
 
-The 2026-09-23 deployment logs from both hosts stopped at `apt-get update` with
-`NO_PUBKEY` / missing signing keys. The Guardian installer had not run at that point.
-Cloudflare documents its signing-key rollover and current scoped keyring at
-[the official package repository](https://pkg.cloudflare.com/index.html).
+- nodes: `pi`, `jetson`
+- services: `dhras-vision-service`, `dhras-dashboard`, `dhras-mcp`, `tv-mcp`
+- cameras: `backyard`, `indoor`
 
-Refresh the official key and standard cloudflared source entry, then retry prerequisites:
+Optional and nonblocking when hard-failed/unknown:
+
+- `frontyard` camera
+- `fitbit-mcp`, `polar-h10-mcp`, `pi-git-mcp`, `jetson-git-mcp`
+- Cloudflare path objects and unified portal
+- public MCP layers while `public_required: false`
+- auth while the dedicated Guardian auth probe is disabled
+
+Optional hard failures remain visible in the snapshot/UI but do not degrade their parent. Optional soft integrity warnings such as catalog drift or unresolved conflicts remain YELLOW.
+
+## Routine probe behavior
+
+Routine MCP health traffic is limited to:
+
+1. `initialize`
+2. `notifications/initialized`
+3. `tools/list`
+
+Guardian does not call application tools for routine health checks. Catalog drift is visible as YELLOW. Auth/invoke remains UNKNOWN until a dedicated probe identity is implemented.
+
+DHRAS camera state is preserved per camera. `frontyard` is currently optional; `backyard` and `indoor` are required. Production DHRAS startup is systemd-only through `vision-hub.service`; do not use the legacy `robotics/jetson-vision/start.sh` path in production.
+
+## Metrics
+
+Agents report CPU load, available RAM, free disk, and readable thermal sensors. Jetson GPU utilization uses `/sys/devices/platform/bus@0/17000000.gpu/load` first and `tegrastats` `GR3D_FREQ` as fallback. Missing metrics remain null; Guardian does not invent values.
+
+## Mission Control UI
+
+Mission Control is LAN-only and read-only:
+
+```text
+http://192.168.1.18:9070/
+```
+
+To install/enable the UI unit explicitly:
+
+```bash
+cd ~/syzygy-mission-control
+sudo cp systemd/syzygy-mission-control.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now syzygy-mission-control.service
+curl -sS http://127.0.0.1:9070/api/health
+```
+
+## Manual one-shot checks
+
+Use a separate state directory while the systemd Guardian owns `state/`:
+
+```bash
+cd ~/syzygy-mission-control
+.venv/bin/python -m agents.local --node pi --once --output state/manual-agent.json
+.venv/bin/python -m guardian.aggregator --once --state-dir state/manual
+.venv/bin/python -m guardian.inspect --snapshot state/manual/snapshot.json
+```
+
+On Jetson substitute `--node jetson` for the agent command.
+
+`state/snapshot.json` is written atomically with temp file + fsync + replace. Events append to `state/events.jsonl` and are fsynced. Every consumer must enforce the configured Guardian heartbeat freshness guard; stale snapshots never remain GREEN indefinitely.
+
+## Tests and live acceptance
+
+Run:
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+Live Pi acceptance on 2026-09-23 passed **31 tests** and produced:
+
+```text
+SYSTEM: green
+VISION: green required=True
+frontyard red required=False
+backyard green required=True
+indoor green required=True
+```
+
+At that check `syzygy-agent.service`, `syzygy-guardian.service`, and `syzygy-mission-control.service` were all active.
+
+## Logs
+
+```bash
+# Either host
+journalctl -u syzygy-agent -n 50 --no-pager
+
+# Pi
+journalctl -u syzygy-guardian -n 50 --no-pager
+journalctl -u syzygy-mission-control -n 50 --no-pager
+```
+
+## Cloudflare APT signing-key recovery
+
+If `apt-get update` fails with Cloudflare `NO_PUBKEY`, refresh the official scoped keyring and retry prerequisites:
 
 ```bash
 (
@@ -72,98 +164,4 @@ sudo apt-get install -y python3-venv
 )
 ```
 
-This refreshes package metadata and installs the Python prerequisite; it does not
-upgrade or restart cloudflared. Keep signature verification enabled. If APT reports
-duplicate/conflicting source entries, inspect those entries before changing them.
-Then run the appropriate `bash scripts/install.sh jetson` or `bash scripts/install.sh pi`
-from the updated checkout. Agent startup completes an initial probe before binding;
-the retrying health requests above allow for that startup time.
-
-## Foreground / one-shot operation
-
-```bash
-# On each respective host; substitute jetson on Jetson:
-.venv/bin/python -m agents.local --node pi --once --output state/agent.json
-.venv/bin/python -m agents.local --node pi
-# On Pi (agents must already be running):
-.venv/bin/python -m guardian.aggregator --use-candidate-agents --once --state-dir state/manual
-.venv/bin/python -m guardian.inspect --snapshot state/manual/snapshot.json
-```
-
-Only one Guardian writer may own a state directory. Use a separate directory for
-manual checks while the systemd service runs. `snapshot.json` is replaced using a
-same-directory temporary file, file fsync, atomic replace, and directory fsync on Linux.
-Events append before the snapshot, are fsynced, and include trace IDs. A crash between
-event append and snapshot replacement can replay a transition under a new trace ID;
-consumers must tolerate such replay. Event rotation is an operator responsibility in this skeleton.
-
-## Health semantics and operational limits
-
-Wire statuses are lowercase per schema v1: GREEN/YELLOW/RED/UNKNOWN map to
-`green/yellow/red/unknown`. Existing required flags are preserved: currently every
-node/service/path is optional. Thus system GREEN does not mean every optional service
-is healthy. Inspect individual objects; approve final requiredness before production.
-
-Routine MCP traffic is initialize, notifications/initialized, and tools/list only.
-No functional tools are invoked even if an allowed/optional tool appears in config.
-The MCP probe validates IDs, errors, server identity, names/count fingerprints, sessions,
-and pagination. Catalog drift is YELLOW. Auth and portal layers stay UNKNOWN until
-their dedicated implementations and live verification exist.
-
-Per-camera online values are retained as their own required layers within the vision
-service. The non-authoritative vision-hub unit can degrade to YELLOW, but cannot alone
-make a working vision process RED. An offline required camera makes vision RED and its
-dependents inherit the classified dependency failure. This does not alter the existing
-optional status of the service at system level.
-
-The agent reports CPU load, available RAM, free disk, and thermal sensors when readable.
-GPU utilization is read on Jetson from sysfs `.../17000000.gpu/load` (millipercent) with tegrastats `GR3D_FREQ` fallback; remains null when no evidence exists (e.g. Pi). No missing metric
-is fabricated. Auth sessions, tool invocation history, and operator activity ingestion
-are not implemented; activity currently contains health status transitions only.
-
-A saved file cannot update itself after Guardian dies. Every consumer must apply the
-120-second heartbeat guard when reading it; `guardian.inspect` / `read_snapshot` do so.
-Freshness thresholds and polling intervals are configuration-driven. Cached observations
-retain original timestamps and trace IDs, rather than being relabeled as fresh each tick.
-
-## Tests
-
-Implementation validation on the development workstation: 16 unittest methods pass,
-including all 15 locked reducer fixtures and real loopback JSON/SSE protocol tests.
-A one-shot aggregator run wrote snapshot/events successfully. All six external MCP
-routes returned HTTP 403 from that workstation; this does not reverify Pi/Jetson
-connectivity or supersede the original live inventory. Repeat the tick on Pi after deployment.
-
-```bash
-.venv/bin/python -m unittest discover -s tests -v
-```
-
-Tests use deterministic fixtures and local mock HTTP servers, not Pi/Jetson hardware.
-For service logs: `journalctl -u syzygy-agent -n 50 --no-pager` on either host and
-`journalctl -u syzygy-guardian -n 50 --no-pager` on Pi.
-
-## Mission Control UI (Pi only)
-
-LAN read-only UI on port 9070. After Guardian is up:
-
-Already up to date.
-
-Open  on LAN only. Do not publish  through Cloudflare.
-A fresh  writes/enables this unit when  is present.
-
-## Mission Control UI (Pi only)
-
-LAN read-only UI on port 9070. After Guardian is up:
-
-```bash
-cd ~/syzygy-mission-control
-git pull --ff-only
-fuser -k 9070/tcp 2>/dev/null || true
-sudo cp systemd/syzygy-mission-control.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now syzygy-mission-control.service
-curl --fail --retry 10 --retry-connrefused --retry-delay 1 --max-time 5 http://127.0.0.1:9070/api/health
-```
-
-Open `http://192.168.1.18:9070/` on LAN only. Do not publish `:9070` through Cloudflare.
-A fresh `bash scripts/install.sh pi` writes/enables this unit when `scripts/run-mission-control.sh` is present.
+This refreshes package metadata only; it does not restart or upgrade cloudflared.
