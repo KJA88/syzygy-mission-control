@@ -34,7 +34,7 @@ RoArm was discovered locally/publicly during inventory but remains explicitly ou
 - Verify LAN bind/port availability, systemd permissions, agent JSON freshness and restart recovery on both hosts
 - Verify one Guardian tick on Pi against both agents and all six public routes; compare per-camera output with DHRAS endpoints
 - [done 2026-09-23] Verify GPU utilization adapter on Jetson — sysfs load millipercent + tegrastats fallback; alert thresholds still TBD
-- DHRAS vision startup ownership: `vision-hub.service` is enabled but was inactive while `vision_service.py` was live; determine whether startup is manual, `start.sh`, or another supervisor
+- [done 2026-09-23] DHRAS vision startup ownership: intended owner is `vision-hub.service`. Orphan manual/`start.sh` process stopped; unit restarted and verified Active under systemd; Guardian local_service green. Production startup = systemd only (do not use `start.sh`). Frontyard offline remains parked coupler.
 - DHRAS dashboard/vision public URLs if they are intended to be public separately from DHRAS MCP
 - unified MCP portal URL and catalog behavior
 - dedicated Guardian auth probe identity and status method
@@ -66,7 +66,7 @@ Still open (unchanged intent):
 
 - [done 2026-09-23] Promote agents off `--use-candidate-agents` — `agent` URLs set to live `/health` endpoints; flag removed from installer
 - [done 2026-09-23] Jetson GPU utilization adapter — sysfs `17000000.gpu/load` (+ tegrastats GR3D_FREQ fallback)
-- DHRAS vision startup ownership (`vision-hub.service` vs `start.sh`)
+- [done 2026-09-23] DHRAS vision startup ownership restored under `vision-hub.service` (orphan/`start.sh` path retired for production)
 - Dedicated Guardian auth probe identity (auth stays `AUTH_PROBE_OFF` / UNKNOWN)
 - Final required vs optional policy before production reduction
 - Public MCP HTTP 403 without dedicated Access identity is expected; local probes remain trusted path
@@ -85,3 +85,10 @@ Still open (unchanged intent):
 - `nvidia-smi --query-gpu=utilization.gpu` returns `N/A` on this board — not used
 - Agent `metrics.gpu_utilization_percent` reads sysfs first (0-1000 → %), else tegrastats; remains null if neither works (e.g. Pi)
 - Alert thresholds for GPU still TBD (not set in this change)
+
+## Status update 2026-09-23 (DHRAS vision-hub ownership)
+
+- Finding: `vision-hub.service` enabled but inactive since 2026-09-20; live process was orphan under PID 1 from 2026-09-22 (`start.sh`/manual), while `vision-dashboard.service` and `dhras-mcp.service` stayed correctly under systemd.
+- Fix (owner-approved): `pkill` orphan `vision_service.py`, then `sudo systemctl start vision-hub.service`.
+- Verified: unit Active/running in `/system.slice/vision-hub.service`; health `http://192.168.1.17:8081/health` -> backyard/indoor true, frontyard false; agent layers `local_service`/`local_process`/`local_port`/`local_health` green.
+- Rule: production startup = systemd only. Repo `start.sh` is legacy dual-start and can recreate the orphan mismatch.

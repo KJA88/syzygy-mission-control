@@ -359,3 +359,7 @@ paths:
     required: false
     url: VERIFY_LIVE
     catalog_behavior: VERIFY_LIVE
+
+# Ownership notes (VERIFY_LIVE 2026-09-23)
+# dhras-vision-service systemd unit: vision-hub.service (authoritative).
+# Do not start via robotics/jetson-vision/start.sh in production.
