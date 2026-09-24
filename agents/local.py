@@ -88,11 +88,16 @@ def metrics():
         value['cpu_load_1m'] = os.getloadavg()[0]
         memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
         value['ram_available_bytes'] = int(memory['MemAvailable'].split()[0]) * 1024
-        temperatures = list(Path('/sys/class/thermal').glob('thermal_zone*/temp'))
-        if temperatures:
-            value['temperature_c'] = max(int(p.read_text()) / 1000 for p in temperatures)
-    except (OSError, ValueError, AttributeError):
+    except (OSError, ValueError, AttributeError, TypeError):
         pass
+    temps = []
+    for path in Path('/sys/class/thermal').glob('thermal_zone*/temp'):
+        try:
+            temps.append(int(path.read_text().strip()) / 1000)
+        except (OSError, ValueError, TypeError):
+            continue
+    if temps:
+        value['temperature_c'] = max(temps)
     return value
 
 
