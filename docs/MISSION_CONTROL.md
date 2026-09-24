@@ -1,134 +1,139 @@
 # Mission Control V0.1 (LAN, read-only)
 
-Dark cockpit UI that **renders Guardian outputs only**. The browser never probes
-MCP, hosts, Cloudflare, or any service. The tiny UI server only reads local files:
+Mission Control is the read-only SYZYGY cockpit served from the Pi at:
+
+```text
+http://192.168.1.18:9070/
+```
+
+The browser renders Guardian outputs only. It never probes MCP, hosts, Cloudflare, or other services directly. The UI server reads:
 
 - `state/snapshot.json`
 - `state/events.jsonl`
 
-RoArm is out of scope. There are no mutation / recovery buttons in V0.1.
+RoArm, motion, E-stop, and recovery controls are out of scope for V0.1.
 
 ## Architecture
 
-```
-[Guardian aggregator] --> state/snapshot.json + state/events.jsonl
-                                    |
-                                    v
-                      [ui/server.py  :9070  LAN-only]
-                                    |
-                                    v
-                         [Browser renderer]
-```
-
-Statuses shown as **GREEN / YELLOW / RED / UNKNOWN**.
-
-### Heartbeat freshness (mandatory)
-
-A saved snapshot cannot update itself after Guardian dies. Every consumer must
-apply the hard-stale guard. This UI server mirrors `guardian.storage.read_snapshot`:
-
-- If `guardian.heartbeat_at` is missing or older than **120 seconds**, then:
-  - `system.status` → `unknown`
-  - `system.reason` → `GUARDIAN_HEARTBEAT_STALE`
-  - `guardian.status` → `unknown`
-  - `guardian.class` → `SNAPSHOT_STALE`
-
-Threshold is configurable (`--hard-stale-s` / `MC_HARD_STALE_S`), default 120.
-
-### Optional services vs system GREEN
-
-Current `config/services.yaml` marks nodes/services/paths as **optional**.
-System GREEN therefore does **not** mean every service is healthy. The UI always
-shows system status **and** per-service / per-node cards. Read the cards.
-
-Auth probes are off in V0.1 → auth cards stay honest **UNKNOWN** (`AUTH_PROBE_OFF`).
-
-## Run on Pi (next to Guardian)
-
-From `~/syzygy-mission-control` after the UI files are present:
-
-```bash
-# Preferred convenience launcher (binds 0.0.0.0:9070, state=./state)
-bash scripts/run-mission-control.sh
+```text
+Pi/Jetson local agents
+        |
+        v
+Guardian aggregator
+        |
+        +--> state/snapshot.json
+        +--> state/events.jsonl
+                    |
+                    v
+          ui/server.py :9070
+                    |
+                    v
+             browser renderer
 ```
 
-Or explicitly:
+Statuses are GREEN / YELLOW / RED / UNKNOWN.
 
-```bash
-# LAN bind so TV/other LAN browsers can open it
-python3 ui/server.py --host 0.0.0.0 --port 9070 --state-dir state --ui-dir ui
+## Heartbeat freshness
 
-# Or module entry (same server):
-python3 -m guardian.ui_server --host 0.0.0.0 --port 9070 --state-dir state --ui-dir ui
+A saved snapshot cannot update itself after Guardian stops. Every consumer must apply the hard-stale guard. If `guardian.heartbeat_at` is missing or older than the configured threshold (default 120 seconds):
+
+- `system.status` becomes `unknown`
+- `system.reason` becomes `GUARDIAN_HEARTBEAT_STALE`
+- `guardian.status` becomes `unknown`
+- `guardian.class` becomes `SNAPSHOT_STALE`
+
+## Phase 1 health policy
+
+Required for overall GREEN:
+
+- Pi node
+- Jetson node
+- DHRAS vision service
+- DHRAS dashboard
+- DHRAS MCP
+- TV MCP
+- backyard camera
+- indoor camera
+
+Optional hard failures remain visible but do not block GREEN. This includes the parked `frontyard` camera plus Fitbit, Polar H10, Git Audit MCPs, non-required public paths, portal state, and auth while the dedicated auth probe is off.
+
+Optional soft integrity warnings such as catalog drift or unresolved conflicts still make the affected parent YELLOW.
+
+## Current live acceptance
+
+On 2026-09-23 the Pi passed 31 tests and reported:
+
+```text
+SYSTEM: green
+VISION: green required=True
+frontyard red required=False
+backyard green required=True
+indoor green required=True
 ```
 
-Open: `http://192.168.1.18:9070/`
+At that check the Pi agent, Guardian, and Mission Control systemd services were all active.
 
-Guardian must already be writing `state/snapshot.json`. If the systemd Guardian
-owns `state/`, point Mission Control at the same directory (default). For a
-manual one-shot Guardian check directory, pass that path instead:
+## systemd on Pi
 
-```bash
-MC_STATE_DIR=$HOME/syzygy-mission-control/state/manual \
-  bash scripts/run-mission-control.sh
-```
-
-## LAN-only (never Cloudflare)
-
-Mission Control is an unauthenticated local renderer. Bind to LAN
-(`127.0.0.1` or `0.0.0.0` / `192.168.1.18`) and **do not** publish port 9070
-through Cloudflare, public DNS, or any tunnel.
-
-## Verify without live Guardian
-
-```bash
-cd /path/to/syzygy-mission-control   # or this package root
-mkdir -p /tmp/mc-fixture-state
-cp tests/fixtures/snapshot.json /tmp/mc-fixture-state/snapshot.json
-cp tests/fixtures/events.jsonl /tmp/mc-fixture-state/events.jsonl
-python3 ui/server.py --host 127.0.0.1 --port 9070 --state-dir /tmp/mc-fixture-state --ui-dir ui
-# curl http://127.0.0.1:9070/api/snapshot | jq .system,.guardian
-# open http://127.0.0.1:9070/
-```
-
-Unit tests:
-
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-## Auto-refresh
-
-The browser polls `/api/snapshot` and `/api/events?limit=20` about every 7 seconds.
-
-## Out of scope (V0.1)
-
-- RoArm / joints / E-stop / motion
-- Mutation or recovery buttons
-- Agent health endpoints called from the browser
-- Any network probe from UI or UI server except reading local files
-
-## systemd on Pi (survives reboot)
-
-Prefer the unit over a manual  launcher. After files are on disk:
-
- 152640
-
-Fresh  also installs/enables this unit when the UI launcher exists.
-Do not publish port 9070 via Cloudflare.
-
-## systemd on Pi (survives reboot)
-
-Prefer the unit over a manual background launcher. After files are on disk:
+Mission Control should run under systemd so it survives reboot:
 
 ```bash
 cd ~/syzygy-mission-control
-fuser -k 9070/tcp 2>/dev/null || true
 sudo cp systemd/syzygy-mission-control.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now syzygy-mission-control.service
 curl -sS http://127.0.0.1:9070/api/health
 ```
 
-Fresh `bash scripts/install.sh pi` also installs/enables this unit when the UI launcher exists.
-Do not publish port 9070 via Cloudflare.
+A fresh `bash scripts/install.sh pi` also installs/enables the Mission Control unit.
+
+Do not publish port `9070` through Cloudflare or public DNS.
+
+## Manual run
+
+For troubleshooting only:
+
+```bash
+cd ~/syzygy-mission-control
+bash scripts/run-mission-control.sh
+```
+
+Or explicitly:
+
+```bash
+python3 ui/server.py --host 0.0.0.0 --port 9070 --state-dir state --ui-dir ui
+```
+
+## Auto-refresh
+
+The browser polls `/api/snapshot` and `/api/events?limit=20` about every 7 seconds.
+
+## Offline fixture check
+
+```bash
+cd ~/syzygy-mission-control
+mkdir -p /tmp/mc-fixture-state
+cp tests/fixtures/snapshot.json /tmp/mc-fixture-state/snapshot.json
+cp tests/fixtures/events.jsonl /tmp/mc-fixture-state/events.jsonl
+python3 ui/server.py --host 127.0.0.1 --port 9070 --state-dir /tmp/mc-fixture-state --ui-dir ui
+```
+
+Then query:
+
+```bash
+curl -sS http://127.0.0.1:9070/api/snapshot | python3 -m json.tool
+```
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+## Out of scope for V0.1
+
+- RoArm / joints / motion / E-stop
+- mutation or recovery buttons
+- direct browser-to-agent probing
+- direct browser-to-MCP probing
+- public exposure of the Mission Control UI
