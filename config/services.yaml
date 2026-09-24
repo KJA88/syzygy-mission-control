@@ -211,6 +211,7 @@ services:
     timeout_s: 5
     interval_s: 30
     auth_probe: guardian_identity
+    auth_timeout_s: 10
     auth_url: https://mcp.syzygylab.net/mcp
     auth_protocol_version: "2025-06-18"
     auth_session_required: false

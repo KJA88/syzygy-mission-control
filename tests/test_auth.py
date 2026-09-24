@@ -71,7 +71,7 @@ class AuthProbeTests(unittest.TestCase):
         }
         item = auth_mcp(self.service, 'https://example/mcp', 't', env, denied)
         self.assertEqual(item['status'], 'red')
-        self.assertEqual(item['class'], 'OAUTH_EXPIRED')
+        self.assertEqual(item['class'], 'AUTH_DENIED')
         self.assertEqual(item['http_status'], 403)
 
     def test_service_policy_off_prevents_probe(self):

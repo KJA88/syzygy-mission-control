@@ -42,6 +42,7 @@ def auth_mcp(service, url, trace, environ=None, transport=None):
                     reason='IDENTITY_MISSING')
 
     probe_service = copy.deepcopy(service)
+    probe_service['timeout_s'] = service.get('auth_timeout_s', service['timeout_s'])
     probe = probe_service.setdefault('probe', {})
     if service.get('auth_protocol_version'):
         probe['protocol_version'] = service['auth_protocol_version']
@@ -61,6 +62,6 @@ def auth_mcp(service, url, trace, environ=None, transport=None):
     health['probe_scope'] = 'authenticated_mcp_handshake'
 
     if health.get('http_status') in (401, 403):
-        health['class'] = 'OAUTH_EXPIRED'
+        health['class'] = 'AUTH_DENIED'
         health['status'] = 'red'
     return health

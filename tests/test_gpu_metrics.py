@@ -40,7 +40,7 @@ class GpuUtilizationTests(unittest.TestCase):
 
     def test_metrics_includes_gpu_field(self):
         with mock.patch.object(local, 'gpu_utilization_percent', return_value=7.0):
-            with mock.patch.object(local.os, 'getloadavg', return_value=(0.1, 0.1, 0.1)):
+            with mock.patch.object(local.os, 'getloadavg', return_value=(0.1, 0.1, 0.1), create=True):
                 with mock.patch.object(Path, 'read_text', side_effect=OSError):
                     m = local.metrics()
                     self.assertEqual(m['gpu_utilization_percent'], 7.0)

@@ -50,6 +50,24 @@ auth_probe: guardian_identity
 
 Keep `auth_required: false` during rollout. Once an authenticated route has been live-verified and is part of the product contract, requiredness can be reviewed separately.
 
+### TV canary routing and timeout
+
+TV uses `auth_url: https://mcp.syzygylab.net/mcp`,
+`auth_protocol_version: "2025-06-18"`, and `auth_session_required: false`.
+Guardian uses a configured HTTP(S) `auth_url` verbatim; when absent or not
+configured, it falls back to `public_url.rstrip('/') + public_mcp_path`.
+This is configuration fallback, not a retry after an authentication failure.
+
+`auth_timeout_s: 10` gives the TV authenticated handshake a separate shared
+10-second request budget, including initialization, notification, and catalog
+pages. When omitted, auth falls back to the service's `timeout_s`.
+The ordinary TV health probe keeps `timeout_s: 5` and its direct TV endpoint,
+protocol, and session settings. Auth overrides are applied to a copy only.
+
+The dedicated auth transport uses `http.client` to preserve Cloudflare Access
+header casing, handles JSON and SSE responses, and does not follow redirects.
+TV remains `auth_required: false`; RoArm remains out of scope.
+
 ## Deploy
 
 From the Pi checkout:
@@ -72,7 +90,8 @@ so absence of the file is safe and leaves the probe off.
 ## Status meaning
 
 - `GREEN`: the dedicated identity completed the authenticated MCP handshake/catalog probe
-- `RED / OAUTH_EXPIRED`: the dedicated identity received HTTP 401/403
+- `RED / AUTH_DENIED`: the dedicated identity received HTTP 401/403; this alone does not establish credential expiry
+- `OAUTH_EXPIRED` is reserved for explicit evidence of expiry; the Cloudflare service-token probe currently has no such evidence and never infers it from HTTP status
 - `UNKNOWN / AUTH_PROBE_OFF`: probe disabled, unsupported mode, or identity missing
 - other RED/UNKNOWN classes retain their existing network/protocol meaning
 
