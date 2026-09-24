@@ -34,8 +34,6 @@ def request(url, timeout, payload=None, headers=None, rpc_id=None):
         while True:
             if time.monotonic() > deadline:
                 raise ProbeError('TOOL_TIMEOUT')
-            # read1 makes progress on each available chunk rather than waiting for EOF
-            # or a newline forever on an SSE keep-alive connection.
             block = response.read1(8192)
             total += len(block)
             if total > MAX_BYTES:
@@ -86,22 +84,26 @@ def result(value, rpc_id):
     return value['result']
 
 
-def mcp(service, url, required, trace, transport=request):
+def mcp(service, url, required, trace, transport=request, extra_headers=None):
     started = time.monotonic()
     deadline = started + service['timeout_s']
+
     def call(payload, headers, rpc_id=None):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise ProbeError('TOOL_TIMEOUT')
         return transport(url, remaining, payload, headers, rpc_id)
+
     catalog = fact('unknown', False, utcnow(), trace, 'MCP_CATALOG_MISSING')
     try:
         probe = service['probe']
         headers = {'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream'}
+        if extra_headers:
+            headers.update(extra_headers)
         protocol = probe.get('protocol_version', '2024-11-05')
         value, received = call({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
                 'protocolVersion': protocol, 'capabilities': {},
-                'clientInfo': {'name': 'syzygy-guardian', 'version': '0.1.0'}}}, headers, 1)
+                'clientInfo': {'name': 'syzygy-guardian', 'version': '0.2.0'}}}, headers, 1)
         initialized = result(value, 1)
         info = initialized.get('serverInfo')
         if not isinstance(info, dict) or not isinstance(info.get('name'), str) or not isinstance(initialized.get('capabilities'), dict) or not isinstance(initialized.get('protocolVersion'), str):
