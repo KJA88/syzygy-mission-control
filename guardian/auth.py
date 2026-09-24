@@ -3,10 +3,11 @@
 Credentials are read only from the Guardian process environment. Nothing in this
 module writes, logs, or returns credential values.
 """
+import copy
 import os
 
 from .model import fact, utcnow
-from .probes import mcp
+from .probes import mcp, request_httpclient
 
 
 def auth_mcp(service, url, trace, environ=None, transport=None):
@@ -40,13 +41,21 @@ def auth_mcp(service, url, trace, environ=None, transport=None):
                     probe_mode=mode, identity_configured=False,
                     reason='IDENTITY_MISSING')
 
-    kwargs = dict(extra_headers={
-        'CF-Access-Client-Id': client_id,
-        'CF-Access-Client-Secret': client_secret,
-    })
-    if transport is not None:
-        kwargs['transport'] = transport
-    health, _ = mcp(service, url, required, trace, **kwargs)
+    probe_service = copy.deepcopy(service)
+    probe = probe_service.setdefault('probe', {})
+    if service.get('auth_protocol_version'):
+        probe['protocol_version'] = service['auth_protocol_version']
+    if 'auth_session_required' in service:
+        probe['session_required'] = bool(service['auth_session_required'])
+
+    kwargs = dict(
+        transport=transport or request_httpclient,
+        extra_headers={
+            'CF-Access-Client-Id': client_id,
+            'CF-Access-Client-Secret': client_secret,
+        },
+    )
+    health, _ = mcp(probe_service, url, required, trace, **kwargs)
     health['probe_mode'] = mode
     health['identity_configured'] = True
     health['probe_scope'] = 'authenticated_mcp_handshake'
