@@ -1,10 +1,12 @@
 """Bounded HTTP/MCP observations; there is deliberately no tools/call path."""
 import hashlib
+import http.client
 import json
 import socket
 import ssl
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from .model import fact, utcnow
 
@@ -21,41 +23,71 @@ class ProbeError(Exception):
         self.classification = classification
 
 
+def _read_response(response, timeout, payload=None, rpc_id=None):
+    response_headers = response.headers
+    if payload and 'id' not in payload:
+        return None, response_headers
+    sse = 'text/event-stream' in response_headers.get('Content-Type', '')
+    deadline = time.monotonic() + timeout
+    total, pending, chunks, raw = 0, b'', [], bytearray()
+    while True:
+        if time.monotonic() > deadline:
+            raise ProbeError('TOOL_TIMEOUT')
+        block = response.read1(8192)
+        total += len(block)
+        if total > MAX_BYTES:
+            raise ProbeError('MCP_MALFORMED')
+        if sse:
+            pending += block
+            while b'\n' in pending:
+                line, pending = pending.split(b'\n', 1)
+                line = line.rstrip(b'\r')
+                if line.startswith(b'data:'):
+                    chunks.append(line[5:].lstrip())
+                if not line and chunks:
+                    value = json.loads(b'\n'.join(chunks))
+                    chunks = []
+                    if isinstance(value, dict) and value.get('id') == rpc_id:
+                        return value, response_headers
+        else:
+            raw.extend(block)
+        if not block:
+            if sse:
+                raise ProbeError('MCP_MALFORMED')
+            return json.loads(raw), response_headers
+
+
 def request(url, timeout, payload=None, headers=None, rpc_id=None):
     body = None if payload is None else json.dumps(payload).encode()
     req = urllib.request.Request(url, data=body, headers=headers or {})
-    deadline = time.monotonic() + timeout
     with urllib.request.build_opener(NoRedirect).open(req, timeout=timeout) as response:
-        response_headers = response.headers
-        if payload and 'id' not in payload:
-            return None, response_headers
-        sse = 'text/event-stream' in response_headers.get('Content-Type', '')
-        total, pending, chunks, raw = 0, b'', [], bytearray()
-        while True:
-            if time.monotonic() > deadline:
-                raise ProbeError('TOOL_TIMEOUT')
-            block = response.read1(8192)
-            total += len(block)
-            if total > MAX_BYTES:
-                raise ProbeError('MCP_MALFORMED')
-            if sse:
-                pending += block
-                while b'\n' in pending:
-                    line, pending = pending.split(b'\n', 1)
-                    line = line.rstrip(b'\r')
-                    if line.startswith(b'data:'):
-                        chunks.append(line[5:].lstrip())
-                    if not line and chunks:
-                        value = json.loads(b'\n'.join(chunks))
-                        chunks = []
-                        if isinstance(value, dict) and value.get('id') == rpc_id:
-                            return value, response_headers
-            else:
-                raw.extend(block)
-            if not block:
-                if sse:
-                    raise ProbeError('MCP_MALFORMED')
-                return json.loads(raw), response_headers
+        return _read_response(response, timeout, payload, rpc_id)
+
+
+def request_httpclient(url, timeout, payload=None, headers=None, rpc_id=None):
+    """HTTP transport that preserves caller-supplied header casing.
+
+    Cloudflare Access service-token headers are sent exactly as configured. This
+    transport is used only for the dedicated auth probe; ordinary probes retain
+    urllib behavior.
+    """
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+        raise ValueError('Unsupported URL')
+    port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+    conn_cls = http.client.HTTPSConnection if parsed.scheme == 'https' else http.client.HTTPConnection
+    conn = conn_cls(parsed.hostname, port, timeout=timeout)
+    path = urllib.parse.urlunsplit(('', '', parsed.path or '/', parsed.query, ''))
+    body = None if payload is None else json.dumps(payload).encode()
+    try:
+        conn.request('POST' if payload is not None else 'GET', path, body=body, headers=headers or {})
+        response = conn.getresponse()
+        if response.status >= 300:
+            # Preserve the existing classifier contract used by mcp/auth_mcp.
+            raise urllib.error.HTTPError(url, response.status, response.reason, response.headers, response)
+        return _read_response(response, timeout, payload, rpc_id)
+    finally:
+        conn.close()
 
 
 def classify(error):
