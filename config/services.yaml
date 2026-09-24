@@ -210,7 +210,8 @@ services:
         version: "1.30.0"
     timeout_s: 5
     interval_s: 30
-    auth_probe: off
+    auth_probe: guardian_identity
+    auth_required: false
     dependencies: []
     verified_live: 2026-09-23
 
