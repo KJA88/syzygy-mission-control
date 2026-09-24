@@ -42,9 +42,10 @@ serve only cached `/health` JSON, and offer no command execution or control API.
 Restrict LAN access to trusted hosts with your existing firewall; do not publish these
 unauthenticated agent endpoints through Cloudflare. No firewall or tunnel is changed.
 
-The installer opts Guardian into `agent_candidate_url` using `--use-candidate-agents`.
-After both endpoints are verified, set each node's `agent` to its verified URL and remove
-the opt-in flag from the Guardian unit. Keep live-verification dates honest.
+Agent endpoints were live-verified on 2026-09-23 and written into each node's `agent` field
+(`http://192.168.1.18:9071/health`, `http://192.168.1.17:9071/health`). The installer no longer
+passes `--use-candidate-agents`. Keep `agent_candidate_url` only as historical fallback notes;
+production Guardian uses `agent` alone. Keep live-verification dates honest.
 
 ## If APT stops on Cloudflare signing keys
 

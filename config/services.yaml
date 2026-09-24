@@ -15,7 +15,7 @@ nodes:
   - id: pi
     display_name: Raspberry Pi
     required: false
-    agent: VERIFY_LIVE_PI_AGENT
+    agent: http://192.168.1.18:9071/health
     agent_bind: 192.168.1.18
     agent_port: 9071
     agent_candidate_url: http://192.168.1.18:9071/health
@@ -29,7 +29,7 @@ nodes:
   - id: jetson
     display_name: Jetson
     required: false
-    agent: VERIFY_LIVE_JETSON_AGENT
+    agent: http://192.168.1.17:9071/health
     agent_bind: 192.168.1.17
     agent_port: 9071
     agent_candidate_url: http://192.168.1.17:9071/health

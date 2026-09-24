@@ -64,10 +64,17 @@ Resolved / live now:
 
 Still open (unchanged intent):
 
-- Promote agents off `--use-candidate-agents` after writing verified `agent` URLs into `config/services.yaml`
+- [done 2026-09-23] Promote agents off `--use-candidate-agents` — `agent` URLs set to live `/health` endpoints; flag removed from installer
 - Jetson GPU utilization adapter (still null)
 - DHRAS vision startup ownership (`vision-hub.service` vs `start.sh`)
 - Dedicated Guardian auth probe identity (auth stays `AUTH_PROBE_OFF` / UNKNOWN)
 - Final required vs optional policy before production reduction
 - Public MCP HTTP 403 without dedicated Access identity is expected; local probes remain trusted path
 - Frontyard camera offline until Ethernet coupler
+
+## Status update 2026-09-23 (agent URL promotion)
+
+- Pi agent verified: `http://192.168.1.18:9071/health` → written to `nodes.pi.agent`
+- Jetson agent verified: `http://192.168.1.17:9071/health` → written to `nodes.jetson.agent`
+- `scripts/install.sh` Guardian unit no longer passes `--use-candidate-agents`
+- Live Pi unit still needs one `sudo` rewrite/restart to drop the flag (owner paste)
