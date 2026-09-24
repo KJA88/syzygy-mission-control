@@ -14,7 +14,7 @@ guardian:
 nodes:
   - id: pi
     display_name: Raspberry Pi
-    required: false
+    required: true
     agent: http://192.168.1.18:9071/health
     agent_bind: 192.168.1.18
     agent_port: 9071
@@ -28,7 +28,7 @@ nodes:
 
   - id: jetson
     display_name: Jetson
-    required: false
+    required: true
     agent: http://192.168.1.17:9071/health
     agent_bind: 192.168.1.17
     agent_port: 9071
@@ -45,7 +45,7 @@ services:
   - id: dhras-dashboard
     display_name: DHRAS Dashboard
     host: jetson
-    required: false
+    required: true
     systemd_unit: vision-dashboard.service
     local_url: http://127.0.0.1:8080
     health_url: http://127.0.0.1:8080/api/cameras/status
@@ -59,15 +59,15 @@ services:
   - id: dhras-vision-service
     display_name: DHRAS Vision Service
     host: jetson
-    required: false
+    required: true
     systemd_unit: vision-hub.service
-    systemd_unit_authoritative: false
+    systemd_unit_authoritative: true
     process_match: /home/KA_JET/robotics/jetson-vision/vision_service.py
     local_url: http://127.0.0.1:8081
     health_url: http://127.0.0.1:8081/health
     cameras:
       - id: frontyard
-        required: true
+        required: false
         health_url: http://127.0.0.1:8081/status/frontyard
       - id: backyard
         required: true
@@ -85,7 +85,7 @@ services:
   - id: dhras-mcp
     display_name: DHRAS MCP
     host: jetson
-    required: false
+    required: true
     systemd_unit: dhras-mcp.service
     local_url: http://127.0.0.1:8020
     mcp_path: /mcp
@@ -172,7 +172,7 @@ services:
   - id: tv-mcp
     display_name: TV MCP
     host: pi
-    required: false
+    required: true
     systemd_unit: tv-mcp.service
     local_url: http://127.0.0.1:8065
     mcp_path: /mcp

@@ -38,7 +38,7 @@ RoArm was discovered locally/publicly during inventory but remains explicitly ou
 - DHRAS dashboard/vision public URLs if they are intended to be public separately from DHRAS MCP
 - unified MCP portal URL and catalog behavior
 - dedicated Guardian auth probe identity and status method
-- final required/optional policy for nodes and services before production reduction
+- [done 2026-09-23] final required/optional policy for nodes and services (Phase 1 locked)
 
 ## Live anomaly captured during inventory
 
@@ -68,7 +68,7 @@ Still open (unchanged intent):
 - [done 2026-09-23] Jetson GPU utilization adapter — sysfs `17000000.gpu/load` (+ tegrastats GR3D_FREQ fallback)
 - [done 2026-09-23] DHRAS vision startup ownership restored under `vision-hub.service` (orphan/`start.sh` path retired for production)
 - Dedicated Guardian auth probe identity (auth stays `AUTH_PROBE_OFF` / UNKNOWN)
-- Final required vs optional policy before production reduction
+- [done 2026-09-23] Final required vs optional policy for Phase 1 (see status update)
 - Public MCP HTTP 403 without dedicated Access identity is expected; local probes remain trusted path
 - Frontyard camera offline until Ethernet coupler
 
@@ -92,3 +92,22 @@ Still open (unchanged intent):
 - Fix (owner-approved): `pkill` orphan `vision_service.py`, then `sudo systemctl start vision-hub.service`.
 - Verified: unit Active/running in `/system.slice/vision-hub.service`; health `http://192.168.1.17:8081/health` -> backyard/indoor true, frontyard false; agent layers `local_service`/`local_process`/`local_port`/`local_health` green.
 - Rule: production startup = systemd only. Repo `start.sh` is legacy dual-start and can recreate the orphan mismatch.
+
+## Status update 2026-09-23 (required vs optional Phase 1)
+
+Owner-approved Phase 1 matrix applied to `config/services.yaml`:
+
+Required (must be healthy for system GREEN):
+- nodes: `pi`, `jetson`
+- services: `dhras-vision-service`, `dhras-dashboard`, `dhras-mcp`, `tv-mcp`
+- cameras: `backyard`, `indoor`
+
+Optional (may fail without failing the board):
+- camera: `frontyard` (parked Ethernet coupler)
+- `fitbit-mcp`, `polar-h10-mcp`, `pi-git-mcp`, `jetson-git-mcp`
+- `cloudflare-pi`, `cloudflare-jetson`, `unified-mcp-portal`
+- all `public_required: false` (public 403 without Access remains expected)
+- auth probe remains off/unknown and not required until a dedicated probe exists
+
+Also set `dhras-vision-service.systemd_unit_authoritative: true` after vision-hub ownership restore.
+

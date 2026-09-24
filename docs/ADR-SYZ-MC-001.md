@@ -148,3 +148,8 @@ Rejected because missing evidence and stale evidence must not be treated as fail
 ## Future compatibility
 
 Future subsystems may publish read-only observations into the same Guardian pipeline without changing the reducer contract. Robot integration, motion controls, E-stop, autonomy, and state-engine work are intentionally deferred and require separate design decisions.
+
+## Phase 1 requiredness lock (2026-09-23)
+
+Phase 1 owner lock: Pi/Jetson agents, DHRAS vision+dashboard+MCP, TV MCP, and backyard/indoor cameras are required. Frontyard camera and health/fitness/git/tunnel/portal services are optional. Public paths and auth probes are not required until dedicated Access identity / auth probe exist. See `docs/VERIFY_LIVE.md` status update.
+
