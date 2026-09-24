@@ -1,9 +1,9 @@
 {
-  "status": "yellow",
-  "system": "yellow",
+  "status": "green",
+  "system": "green",
   "layers": [
     "local_mcp",
     "public_mcp"
   ],
-  "class": "TLS_FAIL"
+  "class": null
 }
