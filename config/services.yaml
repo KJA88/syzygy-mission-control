@@ -130,7 +130,9 @@ services:
       public_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 30
-    auth_probe: off
+    auth_probe: guardian_identity
+    auth_timeout_s: 10
+    auth_required: false
     dependencies: [dhras-vision-service]
     verified_live: 2026-09-23
 
@@ -165,7 +167,9 @@ services:
       public_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 60
-    auth_probe: off
+    auth_probe: guardian_identity
+    auth_timeout_s: 10
+    auth_required: false
     dependencies: []
     verified_live: 2026-09-23
 
@@ -251,7 +255,9 @@ services:
       public_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 60
-    auth_probe: off
+    auth_probe: guardian_identity
+    auth_timeout_s: 10
+    auth_required: false
     dependencies: []
     verified_live: 2026-09-23
 
@@ -290,7 +296,9 @@ services:
       public_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 60
-    auth_probe: off
+    auth_probe: guardian_identity
+    auth_timeout_s: 10
+    auth_required: false
     dependencies: []
     verified_live: 2026-09-23
 
@@ -326,7 +334,9 @@ services:
       public_catalog_verified: 2026-09-23
     timeout_s: 5
     interval_s: 60
-    auth_probe: off
+    auth_probe: guardian_identity
+    auth_timeout_s: 10
+    auth_required: false
     dependencies: []
     verified_live: 2026-09-23
 
