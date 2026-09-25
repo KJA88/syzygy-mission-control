@@ -1,0 +1,40 @@
+---
+description: SYZYGY execution, continuity, safety, and token-efficiency rules
+globs:
+alwaysApply: true
+---
+
+# SYZYGY working rules
+
+- Begin by checking the current branch, git status, and the specific files named
+  in the task. Do not rescan the whole repository when existing documentation or
+  earlier results already answer the question.
+- Read `docs/STATE_ENGINE.md` and the relevant session/task context once. Reuse
+  that context during the chat instead of repeatedly summarizing or rereading it.
+- Work toward the requested deliverable. Do not perform speculative cleanup,
+  broad refactors, dependency upgrades, or unrelated investigations.
+- Search narrowly first. Expand only when a concrete unanswered dependency or
+  failing test requires it.
+- Before running an expensive command, check whether an equivalent result was
+  already produced and remains valid for the unchanged code.
+- Run focused tests while editing. Run the full required suites once after the
+  final relevant change. Do not rerun unchanged passing suites without a reason.
+- Do not repeatedly narrate the plan. Give brief progress only at meaningful
+  checkpoints: finding, edit complete, tests complete, or blocker.
+- Never invent work to appear busy. If the implementation is already correct,
+  report the evidence and stop.
+- Preserve existing behavior and user changes. Keep the diff minimal and review
+  it for unrelated edits.
+- End with: findings, changed files, exact tests and totals, remaining risks,
+  git status/commit, and confirmation of prohibited actions not taken.
+
+# Authority boundaries
+
+- Do not merge, deploy, push, restart services, change credentials, operate
+  devices, or access live systems unless K JA explicitly authorizes that exact
+  action.
+- Do not issue RoArm commands or motion. RoArm motion requires a new explicit
+  K JA approval naming the exact move and holding Z.
+- Do not change frozen RoArm or camera-calibration artifacts.
+- Treat requested, remembered, configured, observed, and verified state as
+  different kinds of knowledge. Never promote one to another without evidence.

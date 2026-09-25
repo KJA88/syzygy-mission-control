@@ -17,11 +17,15 @@ def assertion(value, knowledge, freshness, source, observed_at, trace_id,
         raise ValueError("invalid knowledge type: " + str(knowledge))
     if freshness not in FRESHNESS:
         raise ValueError("invalid freshness: " + str(freshness))
-    if confidence is not None and not 0.0 <= float(confidence) <= 1.0:
-        raise ValueError("confidence must be between 0 and 1")
     if knowledge == "unknown":
         value = None
         confidence = None
+    elif value is None:
+        raise ValueError("null values must use unknown knowledge")
+    elif confidence is not None:
+        confidence = float(confidence)
+        if not 0.0 <= confidence <= 1.0:
+            raise ValueError("confidence must be between 0 and 1")
     return {
         "value": deepcopy(value),
         "knowledge": knowledge,
@@ -40,17 +44,22 @@ def unknown(source, trace_id, reason="EVIDENCE_MISSING"):
 
 
 def _freshness(item):
+    classification = item.get("class")
+    if classification == "AGENT_LATE" or str(classification).endswith("_STALE"):
+        return "stale"
+    if str(classification).endswith("_EXPIRED"):
+        return "expired"
     if item.get("status") == "unknown" or item.get("observation_age_s") is None:
         return "unknown"
-    if item.get("class") in ("EVIDENCE_STALE", "SNAPSHOT_STALE", "OBSERVATION_STALE"):
-        return "stale"
     return "fresh"
 
 
 def _health(item, source, trace_id):
     status = item.get("status")
     if status not in ("green", "yellow", "red"):
-        return unknown(source, trace_id, item.get("class") or "EVIDENCE_MISSING")
+        return assertion(
+            None, "unknown", _freshness(item), source, item.get("observed_at"),
+            item.get("trace_id") or trace_id, reason=item.get("class") or "EVIDENCE_MISSING")
     return assertion(status, "derived", _freshness(item), source,
                      item.get("observed_at"), item.get("trace_id") or trace_id,
                      confidence=1.0, reason=item.get("class"))
@@ -70,7 +79,8 @@ def build_state(snapshot):
         "health": _health(
             dict(system, observed_at=guardian.get("observed_at"),
                  observation_age_s=guardian.get("observation_age_s"),
-                 trace_id=guardian.get("trace_id")),
+                 trace_id=guardian.get("trace_id"),
+                 **{"class": system.get("reason")}),
             "guardian/reducer", trace),
         "current_mission": unknown("mission-engine", trace, "NOT_IMPLEMENTED"),
         "active_operator": unknown("operator-registry", trace, "NOT_IMPLEMENTED"),
@@ -78,7 +88,10 @@ def build_state(snapshot):
 
     for node in snapshot.get("nodes") or []:
         attrs = {"health": _health(node, "guardian/node/" + node.get("id", "unknown"), trace)}
-        for name, value in (node.get("metrics") or {}).items():
+        metrics = node.get("metrics")
+        if not isinstance(metrics, dict):
+            metrics = {}
+        for name, value in metrics.items():
             if value is None:
                 attrs["metric/" + name] = unknown(
                     "agent/" + node.get("id", "unknown"),
@@ -92,11 +105,16 @@ def build_state(snapshot):
 
     for service in snapshot.get("services") or []:
         service_id = service.get("id", "unknown")
+        host = service.get("host")
         attrs = {
             "health": _health(service, "guardian/service/" + service_id, trace),
-            "host": assertion(service.get("host"), "configured", "fresh",
-                              "guardian/config", service.get("observed_at"),
-                              service.get("trace_id") or trace, confidence=1.0),
+            "host": (
+                assertion(host, "configured", "fresh", "guardian/config", None,
+                          service.get("trace_id") or trace, confidence=1.0)
+                if host is not None
+                else unknown("guardian/config", service.get("trace_id") or trace,
+                             "CONFIG_MISSING")
+            ),
         }
         if service_id == "tv-mcp":
             attrs.update({

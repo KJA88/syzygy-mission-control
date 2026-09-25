@@ -52,6 +52,21 @@ Rules:
 7. Static configuration is labeled `configured`, never presented as a live observation.
 8. An unavailable metric is `unknown`; `null` is not presented as an observed value.
 
+## Stored-snapshot expiration
+
+Both the Guardian storage reader and Mission Control UI reader enforce the same
+boundary when the Guardian heartbeat exceeds its hard-stale limit:
+
+- the system health assertion becomes unknown and stale
+- observed, derived, verified, requested, and remembered assertions become stale
+- their values and provenance remain intact unless the assertion is system health
+- configured assertions remain fresh because they are static configuration, not
+  time-sensitive observations
+- existing unknown assertions remain unknown
+
+This read-time transform prevents an old snapshot from presenting operational
+evidence as current even when no new Guardian cycle has run.
+
 ## Compatibility
 
 The State Engine is additive. Existing V0.1/V0.2 consumers may ignore the new

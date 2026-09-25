@@ -44,6 +44,43 @@ def age_seconds(ts, now: float):
         return None
 
 
+def mark_state_engine_stale(snapshot: dict) -> None:
+    state = snapshot.get("state_engine")
+    if not isinstance(state, dict):
+        return
+    for entity in state.get("entities", []):
+        if not isinstance(entity, dict):
+            continue
+        attributes = entity.get("attributes")
+        if not isinstance(attributes, dict):
+            continue
+        for assertion in attributes.values():
+            if (
+                isinstance(assertion, dict)
+                and assertion.get("knowledge")
+                in ("observed", "derived", "verified", "requested", "remembered")
+            ):
+                assertion["freshness"] = "stale"
+    system = next(
+        (
+            entity
+            for entity in state.get("entities", [])
+            if isinstance(entity, dict) and entity.get("id") == "system/syzygy"
+        ),
+        None,
+    )
+    if isinstance(system, dict):
+        health = (system.get("attributes") or {}).get("health")
+        if isinstance(health, dict):
+            health.update(
+                value=None,
+                knowledge="unknown",
+                freshness="stale",
+                confidence=None,
+                reason="SNAPSHOT_STALE",
+            )
+
+
 def apply_heartbeat_freshness(snapshot: dict, now: float, hard_stale: float = DEFAULT_HARD_STALE_S) -> dict:
     """Mirror guardian.storage.read_snapshot freshness transform."""
     if not isinstance(snapshot, dict):
@@ -57,6 +94,7 @@ def apply_heartbeat_freshness(snapshot: dict, now: float, hard_stale: float = DE
         guardian.update(status="unknown")
         guardian["class"] = "SNAPSHOT_STALE"
         guardian["observation_age_s"] = elapsed
+        mark_state_engine_stale(out)
     elif elapsed is not None:
         guardian["observation_age_s"] = elapsed
     return out
