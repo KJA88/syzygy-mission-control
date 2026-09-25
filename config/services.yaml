@@ -7,6 +7,14 @@ guardian:
   heartbeat_unknown_s: 120
   observation_unknown_s: 90
 
+roarm:
+  id: roarm
+  display_name: RoArm-M3
+  required: false
+  transport: http
+  base_url: http://192.168.4.1
+  timeout_s: 1.5
+
 # Live inventory captured 2026-09-23.
 # Catalog fingerprint = SHA-256 of sorted tool names joined with "\n" (UTF-8).
 # Public MCP routes below were protocol-tested with initialize + tools/list.

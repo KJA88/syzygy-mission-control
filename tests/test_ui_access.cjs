@@ -73,6 +73,7 @@ test('failed dashboard fetch does not leave the MCP overview green', async () =>
   const el = await render(snapshot(), true);
   assert.match(el['auth-summary'].textContent, /Connection lost/);
   assert.doesNotMatch(el.auth.innerHTML, /status-chip GREEN/);
+  assert.match(el.roarm.innerHTML, /status-chip UNKNOWN/);
 });
 
 test('untrusted reason and server metadata are escaped in details', async () => {
@@ -83,4 +84,39 @@ test('untrusted reason and server metadata are escaped in details', async () => 
   assert.doesNotMatch(el.auth.innerHTML, /<script>|<img/);
   assert.match(el.auth.innerHTML, /&lt;script&gt;/);
   assert.match(el.auth.innerHTML, /&lt;img/);
+});
+
+test('missing RoArm observation renders UNKNOWN without crashing', async () => {
+  const el = await render(snapshot());
+  assert.match(el.roarm.innerHTML, /UNKNOWN/);
+  assert.match(el.roarm.innerHTML, /No RoArm observation/);
+});
+
+test('RoArm observation renders state from the Guardian snapshot', async () => {
+  const snap = snapshot();
+  snap.roarm = {
+    status: 'green', class: null, connected: true, fresh: true,
+    transport: 'http', endpoint: 'http://192.168.4.1',
+    observed_at: new Date().toISOString(),
+    pose: {x: 1, y: 2, z: 3, tilt: 4},
+    joints: {base: 5, shoulder: 6, elbow: 7, wrist: 8, roll: 9, gripper: 10},
+  };
+  const el = await render(snap);
+  assert.match(el.roarm.innerHTML, /status-chip GREEN/);
+  assert.match(el.roarm.innerHTML, /http:\/\/192\.168\.4\.1/);
+  assert.match(el.roarm.innerHTML, /Gripper: <strong>10<\/strong>/);
+});
+
+test('stale Guardian heartbeat overrides previously green RoArm state', async () => {
+  const snap = snapshot();
+  snap.guardian.heartbeat_at = new Date(Date.now() - 180000).toISOString();
+  snap.roarm = {
+    status: 'green', class: null, connected: true, fresh: true,
+    transport: 'http', endpoint: 'http://192.168.4.1',
+    observed_at: new Date(Date.now() - 180000).toISOString(),
+  };
+  const el = await render(snap);
+  assert.match(el.roarm.innerHTML, /status-chip UNKNOWN/);
+  assert.match(el.roarm.innerHTML, /SNAPSHOT_STALE · Stale/);
+  assert.doesNotMatch(el.roarm.innerHTML, /status-chip GREEN/);
 });
