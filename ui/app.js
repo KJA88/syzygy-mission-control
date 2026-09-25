@@ -25,6 +25,7 @@
     servicesCount: document.getElementById("services-count"),
     paths: document.getElementById("paths"),
     pathsCount: document.getElementById("paths-count"),
+    roarm: document.getElementById("roarm"),
     auth: document.getElementById("auth"),
     authSummary: document.getElementById("auth-summary"),
     activityBody: document.getElementById("activity-body"),
@@ -295,6 +296,53 @@
       .join("");
   }
 
+  function renderRoarm(roarm, guardian, ui) {
+    if (!roarm || typeof roarm !== "object") {
+      els.roarm.innerHTML =
+        '<article class="entity"><div class="entity-head"><div class="entity-id">RoArm-M3</div>' +
+        '<div class="status-chip UNKNOWN">UNKNOWN</div></div>' +
+        '<div class="entity-meta">No RoArm observation</div></article>';
+      return;
+    }
+
+    const heartbeatAge = (Date.now() - Date.parse((guardian || {}).heartbeat_at)) / 1000;
+    const snapshotStale = normStatus((guardian || {}).status) !== "GREEN" ||
+      !Number.isFinite(heartbeatAge) || heartbeatAge < -5 ||
+      heartbeatAge > ((ui || {}).hard_stale_s || 120);
+    const status = snapshotStale ? "UNKNOWN" : normStatus(roarm.status);
+    const observedMs = Date.parse(roarm.observed_at);
+    const computedAge = Number.isFinite(observedMs) ? (Date.now() - observedMs) / 1000 : null;
+    const observationAge = roarm.observation_age_s != null ? roarm.observation_age_s : computedAge;
+    const freshness = snapshotStale ? "Stale" :
+      roarm.fresh === true ? "Fresh" : roarm.fresh === false ? "Stale" : "Unknown";
+    const reason = snapshotStale ? "SNAPSHOT_STALE" : (roarm.class || "No fault");
+    const value = function (item) {
+      return item == null || item === "" ? "—" : item;
+    };
+    const pose = roarm.pose && typeof roarm.pose === "object" ? roarm.pose : {};
+    const joints = roarm.joints && typeof roarm.joints === "object" ? roarm.joints : {};
+    const row = function (label, item) {
+      return "<div>" + esc(label) + ": <strong>" + esc(value(item)) + "</strong></div>";
+    };
+
+    els.roarm.innerHTML =
+      '<article class="entity roarm-card"><div class="entity-head"><div class="entity-id">RoArm-M3</div>' +
+      '<div class="status-chip ' + status + '">' + status + "</div></div>" +
+      '<div class="entity-meta">' +
+      esc(reason + " · " + freshness + " · age " + fmtAge(observationAge)) +
+      "</div><div class=\"roarm-summary\">" +
+      row("Transport", roarm.transport) +
+      row("Endpoint", roarm.endpoint) +
+      row("Observed", fmtPT(roarm.observed_at)) +
+      "</div><h3>XYZ</h3><div class=\"metrics\">" +
+      row("X", pose.x) + row("Y", pose.y) + row("Z", pose.z) + row("Tilt", pose.tilt) +
+      "</div><h3>Joints</h3><div class=\"metrics\">" +
+      row("Base", joints.base) + row("Shoulder", joints.shoulder) +
+      row("Elbow", joints.elbow) + row("Wrist", joints.wrist) +
+      row("Roll", joints.roll) + row("Gripper", joints.gripper) +
+      "</div></article>";
+  }
+
   const MCP_NAMES = {
     "dhras-mcp": "DHRAS", "fitbit-mcp": "Fitbit", "tv-mcp": "TV",
     "pi-git-mcp": "Pi Git Audit", "polar-h10-mcp": "Polar H10",
@@ -438,6 +486,7 @@
     renderNodes(snap.nodes);
     renderServices(snap.services);
     renderPaths(snap.paths);
+    renderRoarm(snap.roarm, snap.guardian, snap._ui);
     renderAuth(snap.auth, snap.services, snap.guardian, snap._ui);
     renderActivity(collectActivity(snap, eventsPayload));
 
@@ -474,6 +523,7 @@
       els.refreshBadge.textContent = "refresh " + Math.round(REFRESH_MS / 1000) + "s";
       els.refreshBadge.className = "pill GREEN";
     } catch (err) {
+      renderRoarm(null, {}, {});
       renderAuth([], [], {}, {});
       els.authSummary.textContent = "Connection lost — current status unavailable";
       els.fetchError.textContent = "UI fetch error: " + (err && err.message ? err.message : err);

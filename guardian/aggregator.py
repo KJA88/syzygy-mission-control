@@ -10,6 +10,7 @@ from .auth import auth_mcp
 from .config import load_config, configured_url
 from .model import age, fact, fresh, reduce_object, reduce_system, stamp, utcnow
 from .probes import http_json, mcp
+from .roarm import probe_roarm, unknown_roarm
 from .storage import atomic_json, append_events, changes
 from .state_engine import build_state
 
@@ -49,7 +50,8 @@ def layer(observations, name, required, now, trace, max_age, host_stale=False):
     return item
 
 
-def build_snapshot(cfg, evidence, public, now, trace, crashed=False, auth_evidence=None):
+def build_snapshot(cfg, evidence, public, now, trace, crashed=False,
+                   auth_evidence=None, roarm=None):
     policy = cfg.get('guardian', {})
     auth_evidence = auth_evidence or {}
     nodes, services, paths, auth = [], [], [], []
@@ -129,6 +131,12 @@ def build_snapshot(cfg, evidence, public, now, trace, crashed=False, auth_eviden
     status, reason = reduce_system(nodes + services + paths + auth, guardian, now, policy.get('heartbeat_unknown_s', 120))
     snapshot = dict(schema_version=1, generated_at=stamp(now), trace_id=trace, guardian=guardian,
                     system=dict(status=status, reason=reason), nodes=nodes, services=services, paths=paths, auth=auth, activity=[])
+    roarm_cfg = cfg.get('roarm')
+    if isinstance(roarm_cfg, dict):
+        snapshot['roarm'] = roarm or unknown_roarm(
+            str(roarm_cfg.get('base_url', '')).rstrip('/'),
+            'No RoArm observation',
+        )
     snapshot['state_engine'] = build_state(snapshot)
     return snapshot
 
@@ -141,9 +149,17 @@ class Guardian:
         trace, now = str(uuid4()), utcnow()
         selected = [s for s in self.cfg['services'] if 'probe' in s and configured_url(s.get('public_url'))]
         due = [s for s in selected if s['id'] not in self.public_cache or now - self.public_cache[s['id']][0] >= s['interval_s']]
+        roarm_cfg = self.cfg.get('roarm')
+        roarm_job = None
         with ThreadPoolExecutor(max_workers=12) as pool:
             agent_jobs = {n['id']: pool.submit(agent_evidence, n, self.use_candidates, trace) for n in self.cfg['nodes']}
             public_jobs = {s['id']: pool.submit(mcp, s, s['public_url'].rstrip('/') + s['public_mcp_path'], s.get('public_required', False), trace) for s in due}
+            if isinstance(roarm_cfg, dict):
+                roarm_job = pool.submit(
+                    probe_roarm,
+                    roarm_cfg.get('base_url', ''),
+                    roarm_cfg.get('timeout_s', 1.5),
+                )
             auth_jobs = {}
             for s in selected:
                 auth_url = s.get('auth_url')
@@ -162,13 +178,26 @@ class Guardian:
                 else:
                     tls.update(status='unknown')
                 self.public_cache[name] = (now, {'public_mcp': health, 'public_catalog': catalog, 'public_tls': tls})
+            if roarm_job is not None:
+                try:
+                    roarm = roarm_job.result()
+                except Exception as exc:
+                    roarm = unknown_roarm(
+                        str(roarm_cfg.get('base_url', '')).rstrip('/'),
+                        exc,
+                    )
+            else:
+                roarm = None
         public = {name: value[1] for name, value in self.public_cache.items()}
         crashed = any(layer.get('class') == 'PROBE_CRASH' for value in public.values() for layer in value.values())
         crashed |= any(item.get('class') == 'PROBE_CRASH' for item in auth_evidence.values())
         for agent in evidence.values():
             if agent:
                 crashed |= any(layer.get('class') == 'PROBE_CRASH' for obj in agent['services'] for layer in obj.get('layers', {}).values())
-        return build_snapshot(self.cfg, evidence, public, utcnow(), trace, crashed, auth_evidence)
+        return build_snapshot(
+            self.cfg, evidence, public, utcnow(), trace, crashed,
+            auth_evidence, roarm,
+        )
 
 
 def main():
