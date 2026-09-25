@@ -11,6 +11,7 @@ from .config import load_config, configured_url
 from .model import age, fact, fresh, reduce_object, reduce_system, stamp, utcnow
 from .probes import http_json, mcp
 from .storage import atomic_json, append_events, changes
+from .state_engine import build_state
 
 
 def missing(required, now, trace, cls='EVIDENCE_MISSING'):
@@ -126,8 +127,10 @@ def build_snapshot(cfg, evidence, public, now, trace, crashed=False, auth_eviden
     guardian = fact('unknown' if crashed else 'green', True, now, trace, 'PROBE_CRASH' if crashed else None,
                     heartbeat_at=stamp(now), last_run_result='crash' if crashed else 'ok')
     status, reason = reduce_system(nodes + services + paths + auth, guardian, now, policy.get('heartbeat_unknown_s', 120))
-    return dict(schema_version=1, generated_at=stamp(now), trace_id=trace, guardian=guardian,
-                system=dict(status=status, reason=reason), nodes=nodes, services=services, paths=paths, auth=auth, activity=[])
+    snapshot = dict(schema_version=1, generated_at=stamp(now), trace_id=trace, guardian=guardian,
+                    system=dict(status=status, reason=reason), nodes=nodes, services=services, paths=paths, auth=auth, activity=[])
+    snapshot['state_engine'] = build_state(snapshot)
+    return snapshot
 
 
 class Guardian:
