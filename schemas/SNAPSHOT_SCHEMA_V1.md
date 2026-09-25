@@ -12,6 +12,7 @@ Top-level fields:
 - `paths`
 - `auth`
 - `activity`
+- `state_engine` (optional additive Phase 2 read-only view)
 
 Every asserted object should carry:
 
@@ -39,3 +40,9 @@ Suggested failure classes include:
 `HOST_UNREACHABLE`, `HOST_AGENT_DOWN`, `SVC_INACTIVE`, `SVC_ALIVE_UNHEALTHY`, `PORT_CLOSED`, `MCP_HANDSHAKE_FAIL`, `MCP_MALFORMED`, `MCP_CATALOG_MISSING`, `MCP_CATALOG_STALE`, `CF_TUNNEL_DOWN`, `DNS_FAIL`, `TLS_FAIL`, `PUBLIC_ENDPOINT_FAIL`, `PORTAL_ROUTING_FAIL`, `OAUTH_EXPIRED`, `OAUTH_SESSION_STALE`, `TOOL_INVOKE_FAIL`, `TOOL_TIMEOUT`, `DEPENDENCY_OUTAGE`, `NET_INTERMITTENT`, `RECOVERED`, `PROBE_CRASH`, `SNAPSHOT_STALE`, `CONFLICTING_PROBES`.
 
 Stored timestamps are UTC. UI may render local time.
+
+## Phase 2 state view
+
+When present, `state_engine` is a versioned read-only entity/attribute model.
+Its assertion semantics and safety rules are defined in `docs/STATE_ENGINE.md`.
+Existing consumers may ignore this additive field.

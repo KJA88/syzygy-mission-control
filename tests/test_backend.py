@@ -60,6 +60,16 @@ class AggregatorTests(unittest.TestCase):
     def setUp(self):
         self.cfg = load_config('config/services.yaml')
 
+    def test_state_engine_is_an_additive_snapshot_section(self):
+        snapshot = build_snapshot(self.cfg, {}, {}, NOW, 't')
+        self.assertTrue({
+            'schema_version', 'generated_at', 'trace_id', 'guardian', 'system',
+            'nodes', 'services', 'paths', 'auth', 'activity',
+        }.issubset(snapshot))
+        self.assertEqual(snapshot['state_engine']['schema_version'], 1)
+        self.assertEqual(snapshot['state_engine']['trace_id'], snapshot['trace_id'])
+        self.assertTrue(snapshot['state_engine']['read_only'])
+
     def test_missing_and_stale_agent_never_green_services(self):
         for evidence in ({}, {'pi': dict(observed_at=stamp(NOW - 91), services=[], paths=[])}):
             snapshot = build_snapshot(self.cfg, evidence, {}, NOW, 't')
@@ -143,9 +153,77 @@ class StorageTests(unittest.TestCase):
     def test_saved_snapshot_goes_unknown_after_guardian_stops(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'snapshot.json'
-            atomic_json(path, {'guardian': {'heartbeat_at': stamp(NOW), 'last_run_result': 'ok'}, 'system': {'status': 'green'}})
+            atomic_json(path, {
+                'guardian': {'heartbeat_at': stamp(NOW), 'last_run_result': 'ok'},
+                'system': {'status': 'green'},
+                'state_engine': {'entities': [
+                    {'id': 'system/syzygy', 'attributes': {
+                        'health': {'value': 'green', 'knowledge': 'derived',
+                                   'freshness': 'fresh', 'confidence': 1.0,
+                                   'source': 'guardian/reducer', 'trace_id': 't'}}},
+                    {'id': 'node/pi', 'attributes': {
+                        'health': {'value': 'green', 'knowledge': 'derived',
+                                   'freshness': 'fresh', 'source': 'guardian/node/pi',
+                                   'trace_id': 'node-t'},
+                        'host': {'value': 'pi', 'knowledge': 'configured',
+                                 'freshness': 'fresh'},
+                        'requested_input': {
+                            'value': 'HDMI 2', 'knowledge': 'requested',
+                            'freshness': 'fresh', 'source': 'operator/request',
+                            'observed_at': stamp(NOW), 'trace_id': 'request-t',
+                            'confidence': 1.0, 'reason': 'OPERATOR_REQUEST'},
+                        'remembered_input': {
+                            'value': 'HDMI 1', 'knowledge': 'remembered',
+                            'freshness': 'fresh', 'source': 'state/cache',
+                            'observed_at': stamp(NOW - 30), 'trace_id': 'memory-t',
+                            'confidence': 0.6, 'reason': 'LAST_KNOWN'},
+                        'unknown_input': {
+                            'value': None, 'knowledge': 'unknown',
+                            'freshness': 'unknown', 'source': 'tv-state-adapter',
+                            'observed_at': None, 'trace_id': 'unknown-t',
+                            'confidence': None, 'reason': 'EVIDENCE_MISSING'}}},
+                ]},
+            })
             self.assertEqual(read_snapshot(path, NOW + 120)['system']['status'], 'green')
-            self.assertEqual(read_snapshot(path, NOW + 121)['system']['status'], 'unknown')
+            stale = read_snapshot(path, NOW + 121)
+            self.assertEqual(stale['system']['status'], 'unknown')
+            entities = {item['id']: item for item in stale['state_engine']['entities']}
+            system_health = entities['system/syzygy']['attributes']['health']
+            self.assertEqual(system_health['knowledge'], 'unknown')
+            self.assertIsNone(system_health['value'])
+            self.assertEqual(system_health['freshness'], 'stale')
+            node = entities['node/pi']['attributes']
+            self.assertEqual(node['health']['freshness'], 'stale')
+            self.assertEqual(node['health']['trace_id'], 'node-t')
+            self.assertEqual(node['host']['freshness'], 'fresh')
+            self.assertEqual(node['requested_input'], {
+                'value': 'HDMI 2', 'knowledge': 'requested',
+                'freshness': 'stale', 'source': 'operator/request',
+                'observed_at': stamp(NOW), 'trace_id': 'request-t',
+                'confidence': 1.0, 'reason': 'OPERATOR_REQUEST'})
+            self.assertEqual(node['remembered_input'], {
+                'value': 'HDMI 1', 'knowledge': 'remembered',
+                'freshness': 'stale', 'source': 'state/cache',
+                'observed_at': stamp(NOW - 30), 'trace_id': 'memory-t',
+                'confidence': 0.6, 'reason': 'LAST_KNOWN'})
+            self.assertEqual(node['unknown_input']['freshness'], 'unknown')
+
+    def test_fresh_probe_crash_does_not_make_current_evidence_stale(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'snapshot.json'
+            atomic_json(path, {
+                'guardian': {'heartbeat_at': stamp(NOW), 'last_run_result': 'crash'},
+                'system': {'status': 'unknown'},
+                'state_engine': {'entities': [
+                    {'id': 'node/pi', 'attributes': {
+                        'health': {'value': 'green', 'knowledge': 'derived',
+                                   'freshness': 'fresh'}}},
+                ]},
+            })
+            snapshot = read_snapshot(path, NOW)
+            health = snapshot['state_engine']['entities'][0]['attributes']['health']
+            self.assertEqual(snapshot['system']['reason'], 'PROBE_CRASH')
+            self.assertEqual(health['freshness'], 'fresh')
 
     def test_atomic_failure_preserves_previous_and_cleans_temp(self):
         with tempfile.TemporaryDirectory() as directory:

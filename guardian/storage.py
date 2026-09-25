@@ -5,6 +5,32 @@ import tempfile
 from pathlib import Path
 
 
+def _mark_state_engine_stale(snapshot):
+    state = snapshot.get('state_engine')
+    if not isinstance(state, dict):
+        return
+    for entity in state.get('entities', []):
+        if not isinstance(entity, dict):
+            continue
+        attributes = entity.get('attributes')
+        if not isinstance(attributes, dict):
+            continue
+        for assertion in attributes.values():
+            if (isinstance(assertion, dict)
+                    and assertion.get('knowledge') in (
+                        'observed', 'derived', 'verified', 'requested', 'remembered')):
+                assertion['freshness'] = 'stale'
+    system = next(
+        (entity for entity in state.get('entities', [])
+         if isinstance(entity, dict) and entity.get('id') == 'system/syzygy'),
+        None)
+    if isinstance(system, dict):
+        health = (system.get('attributes') or {}).get('health')
+        if isinstance(health, dict):
+            health.update(value=None, knowledge='unknown', freshness='stale',
+                          confidence=None, reason='SNAPSHOT_STALE')
+
+
 def read_snapshot(path, now, hard_stale=120):
     from .model import reduce_system
     snapshot = json.loads(Path(path).read_text(encoding='utf-8'))
@@ -12,6 +38,8 @@ def read_snapshot(path, now, hard_stale=120):
     if status == 'unknown':
         snapshot['system'].update(status=status, reason=reason)
         snapshot['guardian'].update(status='unknown', **{'class': 'SNAPSHOT_STALE' if reason == 'GUARDIAN_HEARTBEAT_STALE' else reason})
+        if reason == 'GUARDIAN_HEARTBEAT_STALE':
+            _mark_state_engine_stale(snapshot)
     return snapshot
 
 

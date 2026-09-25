@@ -37,6 +37,35 @@ class FreshnessTests(unittest.TestCase):
 
     def test_stale_heartbeat_forces_unknown(self):
         snap = json.loads((FIX / "snapshot_stale.json").read_text(encoding="utf-8"))
+        snap["state_engine"] = {"entities": [
+            {"id": "system/syzygy", "attributes": {
+                "health": {"value": "green", "knowledge": "derived",
+                           "freshness": "fresh", "confidence": 1.0,
+                           "source": "guardian/reducer", "trace_id": "trace-1"}}},
+            {"id": "node/pi", "attributes": {
+                "health": {"value": "green", "knowledge": "derived",
+                           "freshness": "fresh", "source": "guardian/node/pi",
+                           "trace_id": "node-trace"},
+                "host": {"value": "pi", "knowledge": "configured",
+                         "freshness": "fresh"},
+                "requested_input": {
+                    "value": "HDMI 2", "knowledge": "requested",
+                    "freshness": "fresh", "source": "operator/request",
+                    "observed_at": "2026-09-24T20:00:00Z",
+                    "trace_id": "request-trace", "confidence": 1.0,
+                    "reason": "OPERATOR_REQUEST"},
+                "remembered_input": {
+                    "value": "HDMI 1", "knowledge": "remembered",
+                    "freshness": "fresh", "source": "state/cache",
+                    "observed_at": "2026-09-24T19:59:30Z",
+                    "trace_id": "memory-trace", "confidence": 0.6,
+                    "reason": "LAST_KNOWN"},
+                "unknown_input": {
+                    "value": None, "knowledge": "unknown",
+                    "freshness": "unknown", "source": "tv-state-adapter",
+                    "observed_at": None, "trace_id": "unknown-trace",
+                    "confidence": None, "reason": "EVIDENCE_MISSING"}}},
+        ]}
         # File claims green; reader must force unknown when age > 120s.
         now = datetime.now(timezone.utc).timestamp()
         out = self.mod.apply_heartbeat_freshness(snap, now, hard_stale=120)
@@ -44,6 +73,28 @@ class FreshnessTests(unittest.TestCase):
         self.assertEqual(out["system"]["reason"], "GUARDIAN_HEARTBEAT_STALE")
         self.assertEqual(out["guardian"]["status"], "unknown")
         self.assertEqual(out["guardian"]["class"], "SNAPSHOT_STALE")
+        entities = {item["id"]: item for item in out["state_engine"]["entities"]}
+        system_health = entities["system/syzygy"]["attributes"]["health"]
+        self.assertEqual(system_health["knowledge"], "unknown")
+        self.assertIsNone(system_health["value"])
+        self.assertEqual(system_health["freshness"], "stale")
+        node = entities["node/pi"]["attributes"]
+        self.assertEqual(node["health"]["freshness"], "stale")
+        self.assertEqual(node["health"]["trace_id"], "node-trace")
+        self.assertEqual(node["host"]["freshness"], "fresh")
+        self.assertEqual(node["requested_input"], {
+            "value": "HDMI 2", "knowledge": "requested",
+            "freshness": "stale", "source": "operator/request",
+            "observed_at": "2026-09-24T20:00:00Z",
+            "trace_id": "request-trace", "confidence": 1.0,
+            "reason": "OPERATOR_REQUEST"})
+        self.assertEqual(node["remembered_input"], {
+            "value": "HDMI 1", "knowledge": "remembered",
+            "freshness": "stale", "source": "state/cache",
+            "observed_at": "2026-09-24T19:59:30Z",
+            "trace_id": "memory-trace", "confidence": 0.6,
+            "reason": "LAST_KNOWN"})
+        self.assertEqual(node["unknown_input"]["freshness"], "unknown")
 
     def test_missing_heartbeat_forces_unknown(self):
         snap = {"guardian": {"status": "green"}, "system": {"status": "green"}}
