@@ -26,6 +26,7 @@
     paths: document.getElementById("paths"),
     pathsCount: document.getElementById("paths-count"),
     auth: document.getElementById("auth"),
+    authSummary: document.getElementById("auth-summary"),
     activityBody: document.getElementById("activity-body"),
     activityCount: document.getElementById("activity-count"),
     servedMeta: document.getElementById("served-meta"),
@@ -294,38 +295,78 @@
       .join("");
   }
 
-  function renderAuth(auth) {
-    let list = asList(auth);
-    if (!list.length && auth && typeof auth === "object" && !Array.isArray(auth) && auth.status) {
-      list = [Object.assign({ id: "auth" }, auth)];
-    }
-    if (!list.length) {
-      els.auth.innerHTML =
-        '<article class="entity"><div class="entity-head"><div class="entity-id">auth</div>' +
-        '<div class="status-chip UNKNOWN">UNKNOWN</div></div>' +
-        '<div class="entity-meta">No auth objects · AUTH_PROBE_OFF expected in V0.1</div></article>';
-      return;
-    }
-    els.auth.innerHTML = list
-      .map(function (a) {
-        const id = a.id || "auth";
-        const st = normStatus(a.status);
-        const cls = a.class || "AUTH_PROBE_OFF";
-        return (
-          '<article class="entity">' +
-          '<div class="entity-head"><div class="entity-id">' +
-          esc(id) +
-          '</div><div class="status-chip ' +
-          st +
-          '">' +
-          st +
-          "</div></div>" +
-          '<div class="entity-meta">' +
-          esc(cls) +
-          "</div></article>"
-        );
-      })
-      .join("");
+  const MCP_NAMES = {
+    "dhras-mcp": "DHRAS", "fitbit-mcp": "Fitbit", "tv-mcp": "TV",
+    "pi-git-mcp": "Pi Git Audit", "polar-h10-mcp": "Polar H10",
+    "jetson-git-mcp": "Jetson Git Audit",
+  };
+  const REASONS = {
+    AUTH_DENIED: "The access gateway rejected Guardian’s identity.",
+    OAUTH_EXPIRED: "The authentication credential has expired.",
+    AUTH_PROBE_OFF: "Authenticated access has not been checked.",
+    TOOL_TIMEOUT: "The check did not finish within its time limit.",
+    TLS_FAIL: "A secure connection could not be established.",
+    DNS_FAIL: "The server address could not be found.",
+    PUBLIC_ENDPOINT_FAIL: "The public endpoint rejected the request.",
+    MCP_HANDSHAKE_FAIL: "The server could not complete the connection handshake.",
+    MCP_MALFORMED: "The server returned an unexpected response.",
+    MCP_CATALOG_STALE: "The available tools differ from the expected list.",
+    HOST_AGENT_DOWN: "The host is not reporting fresh health information.",
+    SERVICE_INACTIVE: "The service is not running.",
+    SVC_INACTIVE: "The service is not running.",
+    SVC_STATE_UNKNOWN: "The service’s running state could not be checked.",
+    SVC_ALIVE_UNHEALTHY: "The service is running but its health check failed.",
+    PORT_CLOSED: "The service is not accepting connections.",
+    DEPENDENCY_OUTAGE: "A service this depends on is unavailable.",
+    PROBE_CRASH: "The health check encountered an internal error.",
+    EVIDENCE_MISSING: "No health information is available yet.",
+    SNAPSHOT_STALE: "Guardian’s information is out of date.",
+    OBSERVATION_STALE: "The last observation is out of date.",
+    EVIDENCE_STALE: "The last observation is out of date.",
+  };
+
+  function accessReason(item, auth) {
+    const status = normStatus(item.status);
+    if (status === "GREEN") return auth ? "Guardian completed the authenticated connection check." : "The service is healthy.";
+    if (item.reason === "IDENTITY_MISSING") return "Guardian’s authentication credentials are not configured.";
+    return REASONS[item.class] || (status === "UNKNOWN" ? "No current result is available." :
+      status === "YELLOW" ? "The check needs attention. Open details for the reported reason." :
+      "The check failed. Open details for the reported reason.");
+  }
+
+  function renderAuth(auth, services, guardian, ui) {
+    const authById = new Map(asList(auth).map(a => [a.id, a]));
+    const serviceById = new Map(asList(services).map(s => [s.id, s]));
+    const heartbeatAge = (Date.now() - Date.parse((guardian || {}).heartbeat_at)) / 1000;
+    const stale = normStatus((guardian || {}).status) !== "GREEN" || !Number.isFinite(heartbeatAge) ||
+      heartbeatAge < -5 || heartbeatAge > ((ui || {}).hard_stale_s || 120);
+    let healthy = 0;
+    els.auth.innerHTML = Object.keys(MCP_NAMES).map(function (id) {
+      const service = serviceById.get(id) || {};
+      const authItem = authById.get(id) || (service.layers || {}).client_invoke || {};
+      const health = stale ? {status: "unknown", class: "SNAPSHOT_STALE"} : service;
+      const access = stale ? {status: "unknown", class: "SNAPSHOT_STALE"} : authItem;
+      const hs = normStatus(health.status), as = normStatus(access.status);
+      if (hs === "GREEN" && as === "GREEN") healthy += 1;
+      const healthLabels = {GREEN: "Healthy", YELLOW: "Attention", RED: "Unavailable", UNKNOWN: "Unknown"};
+      const authLabels = {GREEN: "Verified", YELLOW: "Attention", RED: "Failed", UNKNOWN: "Unverified"};
+      const timing = !stale && Number.isFinite(authItem.duration_ms) ?
+        " · " + (authItem.duration_ms / 1000).toFixed(2) + "s" : "";
+      const policy = authItem.required === true ? "Required for system health" :
+        authItem.required === false ? "Does not block system health" : "Requirement not reported";
+      return '<article class="entity access-card"><h3>' + esc(MCP_NAMES[id]) + '</h3>' +
+        '<div class="access-row"><span>Service health</span><span class="status-chip ' + hs + '">' + healthLabels[hs] + '</span></div>' +
+        '<p class="access-reason">' + esc(accessReason(health, false)) + '</p>' +
+        '<div class="access-row"><span>Authenticated access</span><span class="status-chip ' + as + '">' + authLabels[as] + '</span></div>' +
+        '<p class="access-reason">' + esc(accessReason(access, true)) + '</p>' +
+        '<div class="entity-meta">' + esc(policy + timing) + '</div>' +
+        '<details><summary>Check details</summary><dl class="access-details">' +
+        '<dt>Service</dt><dd>' + esc(id) + '</dd><dt>Last auth check</dt><dd>' + esc(fmtPT(authItem.observed_at)) + '</dd>' +
+        '<dt>Responding server</dt><dd>' + esc((authItem.server_info || {}).name || "Not reported") + '</dd>' +
+        '<dt>Service reason</dt><dd>' + esc(health.class || "None reported") + '</dd>' +
+        '<dt>Auth reason</dt><dd>' + esc(access.class || "None reported") + '</dd></dl></details></article>';
+    }).join("");
+    els.authSummary.textContent = stale ? "Waiting for current Guardian data" : healthy + " of 6 healthy and verified";
   }
 
   function collectActivity(snapshot, eventsPayload) {
@@ -397,7 +438,7 @@
     renderNodes(snap.nodes);
     renderServices(snap.services);
     renderPaths(snap.paths);
-    renderAuth(snap.auth);
+    renderAuth(snap.auth, snap.services, snap.guardian, snap._ui);
     renderActivity(collectActivity(snap, eventsPayload));
 
     const ui = snap._ui || {};
@@ -433,6 +474,8 @@
       els.refreshBadge.textContent = "refresh " + Math.round(REFRESH_MS / 1000) + "s";
       els.refreshBadge.className = "pill GREEN";
     } catch (err) {
+      renderAuth([], [], {}, {});
+      els.authSummary.textContent = "Connection lost — current status unavailable";
       els.fetchError.textContent = "UI fetch error: " + (err && err.message ? err.message : err);
       els.fetchError.classList.remove("hidden");
       els.refreshBadge.textContent = "refresh failed";

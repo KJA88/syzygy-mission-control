@@ -58,6 +58,11 @@
   </section>
 
   <main class="grid">
+    <section class="card" aria-labelledby="access-heading">
+      <div class="card-head"><h2 id="access-heading">MCP health &amp; access</h2><span class="count" id="auth-summary" aria-live="polite">Waiting for Guardian</span></div>
+      <p class="hint access-hint">Service health and Guardian’s authenticated connection check, together. Access checks do not run application tools.</p>
+      <div id="auth" class="cards-grid access-grid"></div>
+    </section>
     <section class="card">
       <div class="card-head"><h2>Nodes</h2><span class="count" id="nodes-count">0</span></div>
       <div id="nodes" class="cards-row"></div>
@@ -71,14 +76,6 @@
     <section class="card">
       <div class="card-head"><h2>Paths</h2><span class="count" id="paths-count">0</span></div>
       <div id="paths" class="cards-row"></div>
-    </section>
-
-    <section class="card">
-      <div class="card-head">
-        <h2>Auth</h2>
-        <span class="pill muted">probe off → honest UNKNOWN</span>
-      </div>
-      <div id="auth" class="cards-row"></div>
     </section>
 
     <section class="card activity-card">
