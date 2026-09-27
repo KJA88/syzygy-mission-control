@@ -309,3 +309,46 @@ td.mono, .mono { font-family: var(--mono); }
   body { font-size: 17px; }
   .entity-id { font-size: 1.05rem; }
 }
+
+.shell { display: flex; min-height: 100vh; align-items: stretch; }
+.sidebar {
+  width: 220px;
+  flex: 0 0 220px;
+  background: rgba(8, 12, 18, 0.92);
+  border-right: 1px solid var(--border);
+  padding: 1rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.nav-button, .subtab {
+  font: inherit;
+  text-align: left;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  cursor: pointer;
+}
+.nav-button.active, .subtab.active {
+  color: var(--text);
+  background: var(--panel-2);
+  border-color: var(--border);
+}
+.shell-main { flex: 1; min-width: 0; padding: 0.8rem 1rem 2rem; }
+.view { display: none; }
+.view.active { display: block; }
+.subview { display: none; }
+.subview.active { display: block; }
+.section-head, .subtabs, .glance, .cam-grid, .stack { margin-bottom: 0.8rem; }
+.glance, .cam-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.8rem; }
+.cam-stream { width: 100%; max-height: 220px; object-fit: cover; background: #000; border-radius: 8px; }
+.cam-card h2, .glance h2, .section-head h1, .view > h1 { margin: 0 0 0.4rem; }
+#ctrl-stop { font-weight: 700; }
+@media (max-width: 800px) {
+  .shell { flex-direction: column; }
+  .sidebar { width: 100%; flex-basis: auto; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+  .sidebar .brand { display: none; }
+  .nav-button { white-space: nowrap; }
+}

@@ -27,7 +27,7 @@ async function render(snap, fail = false) {
   };
   vm.runInNewContext(code, context);
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(requests, ['/api/snapshot', '/api/events?limit=20']);
+  assert.deepEqual(requests.slice(0, 2), ['/api/snapshot', '/api/events?limit=20']);
   return elements;
 }
 

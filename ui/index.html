@@ -3,156 +3,219 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SYZYGY Mission Control V0.1</title>
+  <title>SYZYGY Mission Control</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="scanlines" aria-hidden="true"></div>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">SYZYGY</span>
-      <span class="brand-sub">Mission Control · V0.1 · read-only</span>
-    </div>
-    <div class="topbar-meta">
-      <span id="clock" class="mono">--</span>
-      <span id="refresh-badge" class="pill muted">refresh --</span>
-      <span id="fetch-error" class="pill red hidden"></span>
-    </div>
-  </header>
-
-  <section id="guardian-strip" class="guardian-strip card">
-    <div class="strip-item">
-      <div class="label">Guardian</div>
-      <div id="g-status" class="status-chip UNKNOWN">UNKNOWN</div>
-    </div>
-    <div class="strip-item">
-      <div class="label">Heartbeat</div>
-      <div id="g-heartbeat" class="mono value">—</div>
-    </div>
-    <div class="strip-item">
-      <div class="label">Age</div>
-      <div id="g-age" class="mono value">—</div>
-    </div>
-    <div class="strip-item">
-      <div class="label">Last run</div>
-      <div id="g-run" class="mono value">—</div>
-    </div>
-    <div class="strip-item wide">
-      <div class="label">Trace</div>
-      <div id="g-trace" class="mono value trunc">—</div>
-    </div>
-  </section>
-
-  <section class="system-row">
-    <article class="card system-card">
-      <div class="card-head">
-        <h2>System</h2>
-        <div id="sys-status" class="status-chip UNKNOWN">UNKNOWN</div>
+  <div class="shell">
+    <nav class="sidebar" aria-label="Sections">
+      <div class="brand">
+        <span class="brand-mark">SYZYGY</span>
+        <span class="brand-sub">Mission Control</span>
       </div>
-      <p id="sys-reason" class="reason">Waiting for Guardian snapshot…</p>
-      <p class="hint">
-        System GREEN only reflects <strong>required</strong> objects. Optional services can still be
-        RED/YELLOW/UNKNOWN — always read the cards below.
-      </p>
-    </article>
-  </section>
+      <button type="button" class="nav-button active" data-view="overview">Overview</button>
+      <button type="button" class="nav-button" data-view="perception">Perception</button>
+      <button type="button" class="nav-button" data-view="robots">Robots</button>
+      <button type="button" class="nav-button" data-view="devices">Devices</button>
+      <button type="button" class="nav-button" data-view="events">Events</button>
+      <button type="button" class="nav-button" data-view="system">System</button>
+      <button type="button" class="nav-button" data-view="settings">Settings</button>
+    </nav>
+    <div class="shell-main">
+      <header class="topbar">
+        <div class="topbar-meta">
+          <span id="clock" class="mono">--</span>
+          <span id="sys-status" class="status-chip UNKNOWN">UNKNOWN</span>
+          <span id="refresh-badge" class="pill muted">refresh --</span>
+          <span id="fetch-error" class="pill red hidden"></span>
+        </div>
+      </header>
 
-  <main class="grid">
-    <section class="card" aria-labelledby="access-heading">
-      <div class="card-head"><h2 id="access-heading">MCP health &amp; access</h2><span class="count" id="auth-summary" aria-live="polite">Waiting for Guardian</span></div>
-      <p class="hint access-hint">Service health and Guardian’s authenticated connection check, together. Access checks do not run application tools.</p>
-      <div id="auth" class="cards-grid access-grid"></div>
-    </section>
-    <section class="card">
-      <div class="card-head"><h2>Nodes</h2><span class="count" id="nodes-count">0</span></div>
-      <div id="nodes" class="cards-row"></div>
-    </section>
+      <section id="view-overview" class="view active">
+        <h1>Overview</h1>
+        <div class="glance">
+          <article class="card"><h2>System</h2><p id="overview-system">Waiting for Guardian</p></article>
+          <article class="card"><h2>Alerts</h2><p id="overview-alerts">None</p></article>
+          <article class="card"><h2>Operational state</h2><p id="overview-operational">unknown</p></article>
+          <article class="card"><h2>Perception</h2><p id="overview-perception">Waiting for Vision Hub</p></article>
+          <article class="card"><h2>Robots</h2><p id="overview-robots">Waiting for RoArm</p></article>
+          <article class="card"><h2>Activity</h2><p id="overview-activity">No events yet</p></article>
+        </div>
+      </section>
 
-    <section class="card">
-      <div class="card-head"><h2>Services</h2><span class="count" id="services-count">0</span></div>
-      <div id="services" class="cards-grid"></div>
-    </section>
+      <section id="view-perception" class="view">
+        <div class="section-head">
+          <h1>Perception</h1>
+          <p id="perception-status" class="hint">Waiting for Vision Hub</p>
+        </div>
+        <div class="subtabs" role="tablist">
+          <button type="button" class="subtab active" data-tab="cameras">Cameras</button>
+          <button type="button" class="subtab" data-tab="detections">Detections</button>
+          <button type="button" class="subtab" data-tab="snapshots">Snapshots</button>
+        </div>
+        <div id="tab-cameras" class="subview active">
+          <div id="cam-grid" class="cam-grid"></div>
+        </div>
+        <div id="tab-detections" class="subview">
+          <div id="detection-list" class="stack"></div>
+        </div>
+        <div id="tab-snapshots" class="subview">
+          <div id="snapshot-grid" class="cam-grid"></div>
+        </div>
+      </section>
 
-    <section class="card">
-      <div class="card-head"><h2>Paths</h2><span class="count" id="paths-count">0</span></div>
-      <div id="paths" class="cards-row"></div>
-    </section>
+      <section id="view-robots" class="view">
+        <div class="section-head">
+          <h1>Robots</h1>
+          <div class="subtabs">
+            <button type="button" class="subtab active">RoArm-M3</button>
+          </div>
+        </div>
+        <p class="hint">Rover and drone pages can be added beside RoArm when those services exist.</p>
+        <section class="card" aria-labelledby="operational-heading">
+          <div class="card-head"><h2 id="operational-heading">Operational state</h2></div>
+          <p class="hint">Authoritative commanded state from the RoArm control owner, separate from Guardian observations.</p>
+          <div id="operational"></div>
+        </section>
+        <section class="card" aria-labelledby="control-heading">
+          <div class="card-head"><h2 id="control-heading">RoArm control</h2></div>
+          <p class="hint">Named skills run automatically when the lightweight gate accepts them. Gripper open/close is not available: the production command layer has no standalone gripper command.</p>
+          <div class="control-grid">
+            <label>Authority <input id="ctrl-authority" value="manual" autocomplete="off"></label>
+            <label>Operator <input id="ctrl-operator" value="manual" autocomplete="off"></label>
+            <label>Mission <input id="ctrl-mission" placeholder="optional" autocomplete="off"></label>
+            <label>X <input id="ctrl-x" inputmode="decimal" autocomplete="off"></label>
+            <label>Y <input id="ctrl-y" inputmode="decimal" autocomplete="off"></label>
+            <label>Z <input id="ctrl-z" inputmode="decimal" autocomplete="off"></label>
+            <label>Tilt <input id="ctrl-t" placeholder="optional" inputmode="decimal" autocomplete="off"></label>
+            <label>Roll <input id="ctrl-r" placeholder="optional" inputmode="decimal" autocomplete="off"></label>
+            <label>Speed <input id="ctrl-spd" placeholder="optional" inputmode="decimal" autocomplete="off"></label>
+          </div>
+          <div class="control-actions">
+            <button type="button" id="ctrl-move">Move to pose</button>
+            <button type="button" id="ctrl-home">Return/Home</button>
+            <label>Pattern
+              <select id="ctrl-pattern">
+                <option value="lissajous">lissajous</option>
+                <option value="circle">circle</option>
+                <option value="spiral">spiral</option>
+              </select>
+            </label>
+            <button type="button" id="ctrl-pattern-run">Run pattern</button>
+            <button type="button" id="ctrl-stop">STOP</button>
+            <button type="button" id="ctrl-clear">Clear stopped/fault</button>
+          </div>
+          <h3 class="control-label">Engineering / direct control</h3>
+          <p class="hint">Deliberate low-level JSON for diagnostics. Autonomous and mission code must use named skills. This uses the same motion ownership rule and stays on this LAN server.</p>
+          <textarea id="ctrl-json" rows="3" spellcheck="false">{"T":105}</textarea>
+          <div class="control-actions">
+            <button type="button" id="ctrl-json-send">Send engineering JSON</button>
+          </div>
+          <pre id="control-result" class="control-result">No request yet</pre>
+        </section>
+        <section class="card" aria-labelledby="roarm-heading">
+          <div class="card-head"><h2 id="roarm-heading">RoArm-M3</h2></div>
+          <div id="roarm"></div>
+        </section>
+      </section>
 
-    <section class="card" aria-labelledby="operational-heading">
-      <div class="card-head"><h2 id="operational-heading">Operational state</h2></div>
-      <p class="hint">Authoritative commanded state from the RoArm control owner, separate from Guardian observations.</p>
-      <div id="operational"></div>
-    </section>
+      <section id="view-devices" class="view">
+        <h1>Devices</h1>
+        <div id="device-list" class="cards-grid"></div>
+      </section>
 
-    <section class="card" aria-labelledby="control-heading">
-      <div class="card-head"><h2 id="control-heading">RoArm control</h2></div>
-      <p class="hint">Named skills run automatically when the lightweight gate accepts them. Gripper open/close is not available: the production command layer has no standalone gripper command.</p>
-      <div class="control-grid">
-        <label>Authority <input id="ctrl-authority" value="manual" autocomplete="off"></label>
-        <label>Operator <input id="ctrl-operator" value="manual" autocomplete="off"></label>
-        <label>Mission <input id="ctrl-mission" placeholder="optional" autocomplete="off"></label>
-        <label>X <input id="ctrl-x" inputmode="decimal" autocomplete="off"></label>
-        <label>Y <input id="ctrl-y" inputmode="decimal" autocomplete="off"></label>
-        <label>Z <input id="ctrl-z" inputmode="decimal" autocomplete="off"></label>
-        <label>Tilt <input id="ctrl-t" placeholder="optional" inputmode="decimal" autocomplete="off"></label>
-        <label>Roll <input id="ctrl-r" placeholder="optional" inputmode="decimal" autocomplete="off"></label>
-        <label>Speed <input id="ctrl-spd" placeholder="optional" inputmode="decimal" autocomplete="off"></label>
-      </div>
-      <div class="control-actions">
-        <button type="button" id="ctrl-move">Move to pose</button>
-        <button type="button" id="ctrl-home">Return/Home</button>
-        <label>Pattern
-          <select id="ctrl-pattern">
-            <option value="lissajous">lissajous</option>
-            <option value="circle">circle</option>
-            <option value="spiral">spiral</option>
-          </select>
-        </label>
-        <button type="button" id="ctrl-pattern-run">Run pattern</button>
-        <button type="button" id="ctrl-stop">STOP</button>
-        <button type="button" id="ctrl-clear">Clear stopped/fault</button>
-      </div>
-      <h3 class="control-label">Engineering / direct control</h3>
-      <p class="hint">Deliberate low-level JSON for diagnostics. Autonomous and mission code must use named skills. This uses the same motion ownership rule and stays on this LAN server.</p>
-      <textarea id="ctrl-json" rows="3" spellcheck="false">{"T":105}</textarea>
-      <div class="control-actions">
-        <button type="button" id="ctrl-json-send">Send engineering JSON</button>
-      </div>
-      <pre id="control-result" class="control-result">No request yet</pre>
-    </section>
+      <section id="view-events" class="view">
+        <h1>Events</h1>
+        <section class="card activity-card">
+          <div class="card-head"><h2>Activity</h2><span class="count" id="activity-count">last 20</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time (PT)</th>
+                  <th>Sev</th>
+                  <th>Component</th>
+                  <th>Result</th>
+                  <th>Class</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody id="activity-body">
+                <tr><td colspan="6" class="empty">No events yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Detections</h2></div>
+          <div id="event-detections" class="stack"></div>
+        </section>
+      </section>
 
-    <section class="card" aria-labelledby="roarm-heading">
-      <div class="card-head"><h2 id="roarm-heading">RoArm-M3</h2></div>
-      <div id="roarm"></div>
-    </section>
+      <section id="view-system" class="view">
+        <h1>System</h1>
+        <section id="guardian-strip" class="guardian-strip card">
+          <div class="strip-item">
+            <div class="label">Guardian</div>
+            <div id="g-status" class="status-chip UNKNOWN">UNKNOWN</div>
+          </div>
+          <div class="strip-item">
+            <div class="label">Heartbeat</div>
+            <div id="g-heartbeat" class="mono value">—</div>
+          </div>
+          <div class="strip-item">
+            <div class="label">Age</div>
+            <div id="g-age" class="mono value">—</div>
+          </div>
+          <div class="strip-item">
+            <div class="label">Last run</div>
+            <div id="g-run" class="mono value">—</div>
+          </div>
+          <div class="strip-item wide">
+            <div class="label">Trace</div>
+            <div id="g-trace" class="mono value trunc">—</div>
+          </div>
+        </section>
+        <article class="card system-card">
+          <div class="card-head"><h2>System</h2></div>
+          <p id="sys-reason" class="reason">Waiting for Guardian snapshot…</p>
+          <p class="hint">System GREEN only reflects <strong>required</strong> objects. Optional services can still be RED/YELLOW/UNKNOWN.</p>
+        </article>
+        <section class="card" aria-labelledby="access-heading">
+          <div class="card-head"><h2 id="access-heading">MCP health &amp; access</h2><span class="count" id="auth-summary" aria-live="polite">Waiting for Guardian</span></div>
+          <p class="hint access-hint">Service health and Guardian’s authenticated connection check, together. Access checks do not run application tools.</p>
+          <div id="auth" class="cards-grid access-grid"></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Nodes</h2><span class="count" id="nodes-count">0</span></div>
+          <div id="nodes" class="cards-row"></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Services</h2><span class="count" id="services-count">0</span></div>
+          <div id="services" class="cards-grid"></div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h2>Paths</h2><span class="count" id="paths-count">0</span></div>
+          <div id="paths" class="cards-row"></div>
+        </section>
+      </section>
 
-    <section class="card activity-card">
-      <div class="card-head"><h2>Activity</h2><span class="count" id="activity-count">last 20</span></div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Time (PT)</th>
-              <th>Sev</th>
-              <th>Component</th>
-              <th>Result</th>
-              <th>Class</th>
-              <th>Message</th>
-            </tr>
-          </thead>
-          <tbody id="activity-body">
-            <tr><td colspan="6" class="empty">No events yet</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-  </main>
+      <section id="view-settings" class="view">
+        <h1>Settings</h1>
+        <article class="card">
+          <h2>Subsystem consoles</h2>
+          <p class="hint">Detailed camera engineering, gallery cleanup, and credentials stay in Vision Hub.</p>
+          <p><a id="vision-hub-link" href="#" target="_blank" rel="noopener">Open Vision Hub</a></p>
+        </article>
+      </section>
 
-  <footer class="footer">
-    <span>Renderer only · local Guardian files · no MCP / Cloudflare / host probes from the browser</span>
-    <span id="served-meta" class="mono muted"></span>
-  </footer>
-
+      <footer class="footer">
+        <span>LAN cockpit · Guardian observes · Vision Hub owns cameras · RoArm skills own arm motion</span>
+        <span id="served-meta" class="mono muted"></span>
+      </footer>
+    </div>
+  </div>
   <script src="app.js"></script>
 </body>
 </html>

@@ -38,6 +38,13 @@ roarm:
     z_min: 0
     z_max: 700
 
+vision:
+  hub_base: http://192.168.1.17:8080
+  service_base: http://192.168.1.17:8081
+  hub_ui: http://192.168.1.17:8080/
+  # Optional parent links. Keys are Vision Hub camera ids. No credentials here.
+  cameras: {}
+
 # Live inventory captured 2026-09-23.
 # Catalog fingerprint = SHA-256 of sorted tool names joined with "\n" (UTF-8).
 # Public MCP routes below were protocol-tested with initialize + tools/list.
