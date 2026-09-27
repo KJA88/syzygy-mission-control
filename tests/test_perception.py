@@ -105,7 +105,7 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(front["capabilities"], ["stream", "detect", "snapshot"])
         self.assertEqual(front["health"], "offline")
         gate = view["cameras"][2]
-        self.assertEqual(gate["capabilities"], ["stream"])
+        self.assertEqual(gate["capabilities"], ["stream", "detect", "snapshot"])
         self.assertEqual(gate["health"], "unknown")
         encoded = json.dumps(view)
         self.assertNotIn("rtsp://", encoded)
@@ -130,6 +130,24 @@ class PerceptionTests(unittest.TestCase):
         posted = [call for call in calls if call[0] == "POST"]
         self.assertEqual(posted[0][1], "http://hub/ptz/backyard")
         self.assertIn(b'"tracking": false', posted[1][2])
+        self.assertTrue(all("/api/cameras/status" not in call[1] and "/api/events" not in call[1] for call in calls))
+
+    def test_ptz_stop_does_not_prefetch_status_or_events(self):
+        client, calls = self.hub({
+            "http://hub/api/config": response(200, CONFIG),
+            "http://hub/api/cameras/status": response(200, {}),
+            "http://hub/api/events?limit=50": response(200, []),
+            "http://hub/ptz/backyard": response(200, {"ok": True}),
+        })
+        self.assertTrue(client.ptz("backyard", "stop")["accepted"])
+        self.assertEqual(
+            [(call[0], call[1]) for call in calls],
+            [("GET", "http://hub/api/config"), ("POST", "http://hub/ptz/backyard")],
+        )
+        self.assertIn(b'"dir": "stop"', calls[1][2])
+        calls.clear()
+        self.assertTrue(client.ptz("backyard", "stop")["accepted"])
+        self.assertEqual([(call[0], call[1]) for call in calls], [("POST", "http://hub/ptz/backyard")])
 
     def test_offline_and_malformed_hub_are_safe(self):
         calls = []
@@ -158,12 +176,15 @@ class PerceptionTests(unittest.TestCase):
             "http://hub/api/cameras/status": response(200, {}),
             "http://hub/api/events?limit=50": response(200, []),
             "http://vision/snapshot/frontyard": response(200, b"\xff\xd8jpeg", "image/jpeg"),
+            "http://vision/snapshot/gate": response(200, b"\xff\xd8gate", "image/jpeg"),
         })
         self.assertEqual(client.ptz("../etc", "left")["reason"], "UNKNOWN_CAMERA")
         body, reason = client.snapshot("frontyard")
         self.assertTrue(body.startswith(b"\xff\xd8"))
         self.assertIsNone(reason)
-        self.assertEqual(client.snapshot("gate")[1], "CAPABILITY_UNAVAILABLE")
+        gate_body, gate_reason = client.snapshot("gate")
+        self.assertTrue(gate_body.startswith(b"\xff\xd8"))
+        self.assertIsNone(gate_reason)
         media, media_reason = client.media("../cameras_config.json")
         self.assertIsNone(media)
         self.assertEqual(media_reason, "MALFORMED_PARAMETERS")
@@ -193,6 +214,16 @@ class PerceptionTests(unittest.TestCase):
         self.assertIn("/api/perception/cameras", script)
         self.assertNotIn("192.168.1.17", script)
         self.assertNotIn("rtsp://", page)
+        signature = script[script.index("function cameraSignature"):script.index("function cameraCard")]
+        for field in ("camera.id", "camera.name", "camera.parent_id", "camera.capabilities", "camera.stream_url"):
+            self.assertIn(field, signature)
+        release = script[script.index("function releasePtz"):script.index("function holdPtz")]
+        self.assertIn('sendPtz(camera, "stop")', release)
+        self.assertNotIn("await", release)
+        for event_name in ("pointerdown", "mousedown", "touchstart", "pointerup", "pointercancel", "touchend", "mouseleave", "blur"):
+            self.assertIn(event_name, script)
+        self.assertIn("setInterval", script)
+        self.assertIn("clearInterval", script)
         spec = importlib.util.spec_from_file_location("mc_perception_server", ROOT / "ui" / "server.py")
         server = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(server)

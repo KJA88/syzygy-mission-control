@@ -729,6 +729,61 @@
     }).join(" ");
   }
 
+  let ptzTimer = null;
+  let ptzCamera = null;
+  let ptzDown = false;
+
+  function sendPtz(camera, dir) {
+    const request = fetch("/api/perception/ptz", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ camera: camera, dir: dir }),
+    });
+    if (dir === "stop") {
+      request.catch(function () {});
+      return;
+    }
+    request.then(function (response) { return response.json(); }).then(function (payload) {
+      setText("perception-status", (payload && payload.reason) || "requested");
+    }).catch(function () {
+      setText("perception-status", "Perception UNKNOWN / OFFLINE");
+    });
+  }
+
+  function releasePtz() {
+    ptzDown = false;
+    if (ptzTimer) {
+      clearInterval(ptzTimer);
+      ptzTimer = null;
+    }
+    if (!ptzCamera) return;
+    const camera = ptzCamera;
+    ptzCamera = null;
+    sendPtz(camera, "stop");
+  }
+
+  function holdPtz(camera, dir) {
+    if (ptzTimer) {
+      clearInterval(ptzTimer);
+      ptzTimer = null;
+    }
+    ptzCamera = camera;
+    sendPtz(camera, dir);
+    ptzTimer = setInterval(function () { sendPtz(camera, dir); }, 300);
+  }
+
+  function cameraSignature(camera) {
+    return [
+      camera.id,
+      camera.name,
+      camera.parent_id || "",
+      camera.type || "",
+      (camera.capabilities || []).join("|"),
+      camera.stream_url || "",
+      camera.hub_url || "",
+    ].join("~");
+  }
+
   function cameraCard(camera) {
     const caps = camera.capabilities || [];
     const controls = [];
@@ -761,21 +816,56 @@
       '<div class="control-actions">' + controls.join("") + "</div></article>";
   }
 
+  function ptzButton(event) {
+    const button = event && event.target;
+    if (!button || !button.getAttribute || !button.getAttribute("data-ptz")) return null;
+    return button;
+  }
+
+  function pressPtz(event) {
+    const button = ptzButton(event);
+    if (!button) return;
+    if (event.cancelable && event.preventDefault) event.preventDefault();
+    const camera = button.getAttribute("data-camera");
+    const dir = button.getAttribute("data-ptz");
+    if (dir === "stop") {
+      releasePtz();
+      sendPtz(camera, "stop");
+      return;
+    }
+    if (ptzDown && (event.type === "mousedown" || event.type === "touchstart")) return;
+    ptzDown = true;
+    if (button.getAttribute("data-leave") !== "yes") {
+      button.setAttribute("data-leave", "yes");
+      button.addEventListener("mouseleave", function () { releasePtz(); });
+    }
+    holdPtz(camera, dir);
+  }
+
   function bindCameraGrid(grid) {
     if (!grid || grid.getAttribute("data-bound") === "yes") return;
     grid.setAttribute("data-bound", "yes");
+    grid.addEventListener("pointerdown", pressPtz);
+    grid.addEventListener("mousedown", pressPtz);
+    grid.addEventListener("touchstart", pressPtz);
     grid.addEventListener("click", function (event) {
       const button = event.target;
-      if (!button || !button.getAttribute) return;
+      if (!button || !button.getAttribute || button.getAttribute("data-ptz")) return;
       const camera = button.getAttribute("data-camera") || button.getAttribute("data-snap");
-      if (button.getAttribute("data-ptz")) {
-        postPerception("/api/perception/ptz", { camera: camera, dir: button.getAttribute("data-ptz") });
-      } else if (button.getAttribute("data-track")) {
+      if (button.getAttribute("data-track")) {
         postPerception("/api/perception/track", { camera: camera, enabled: button.getAttribute("data-track") === "on" });
       } else if (button.getAttribute("data-snap")) {
         window.open("/api/perception/snapshot/" + encodeURIComponent(button.getAttribute("data-snap")), "_blank", "noopener");
       }
     });
+  }
+
+  if (typeof window !== "undefined" && window.addEventListener) {
+    window.addEventListener("pointerup", releasePtz);
+    window.addEventListener("pointercancel", releasePtz);
+    window.addEventListener("touchend", releasePtz);
+    window.addEventListener("mouseup", releasePtz);
+    window.addEventListener("blur", releasePtz);
   }
 
   async function postPerception(url, body) {
@@ -805,8 +895,9 @@
     setText("overview-perception", view.cameras.length + " cameras");
     if (link && view.hub_url) link.href = view.hub_url;
     if (!grid) return;
-    const signature = view.cameras.map(function (camera) { return camera.id; }).join(",");
+    const signature = view.cameras.map(cameraSignature).join(",");
     if (grid.getAttribute("data-cams") !== signature) {
+      releasePtz();
       grid.innerHTML = view.cameras.map(cameraCard).join("");
       grid.setAttribute("data-cams", signature);
       bindCameraGrid(grid);

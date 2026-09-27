@@ -36,14 +36,15 @@ def safe_camera_id(value):
 
 
 def capabilities_for(camera):
-    """Derive capabilities from camera metadata. Never from a camera name."""
+    """Derive capabilities from camera metadata. Never from a camera name.
+
+    Inference still runs when monitor_only is set; that flag only suppresses
+    actuation. The manual current-frame snapshot is separate from the
+    automatic detection-snapshot flag.
+    """
     if not isinstance(camera, dict):
         return []
-    found = ["stream"]
-    if camera.get("monitor_only") is not True:
-        found.append("detect")
-    if camera.get("snapshots") is True:
-        found.append("snapshot")
+    found = ["stream", "detect", "snapshot"]
     if camera.get("type") == "ptz":
         found.extend(["ptz", "track"])
     return found
@@ -207,6 +208,7 @@ class VisionHub:
         self.metadata = metadata if isinstance(metadata, dict) else {}
         self.opener = opener or urllib.request.urlopen
         self.timeout = timeout
+        self._camera_cache = None
 
     def _request(self, url, method="GET", payload=None):
         data = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -240,6 +242,7 @@ class VisionHub:
         config, error = self._json(self.hub_base + "/api/config")
         if error:
             return {"available": False, "reason": error, "cameras": [], "hub_url": self.hub_ui}
+        self._remember_cameras(config)
         status, _status_error = self._json(self.hub_base + "/api/cameras/status")
         events, _event_error = self._json(self.hub_base + "/api/events?limit=50")
         return normalize_cameras(
@@ -267,20 +270,41 @@ class VisionHub:
             return {"available": False, "reason": error, "snapshots": []}
         return {"available": True, "reason": None, "snapshots": public_gallery(payload, limit)}
 
-    def _camera(self, camera_id):
+    def _remember_cameras(self, config):
+        if isinstance(config, dict) and isinstance(config.get("cameras"), dict):
+            self._camera_cache = config["cameras"]
+            return self._camera_cache
+        return None
+
+    def _config_cameras(self):
+        """Capability data only. Status and events are not part of command validation."""
+        if not self.hub_base:
+            return None, "VISION_HUB_UNAVAILABLE"
+        config, error = self._json(self.hub_base + "/api/config")
+        if error:
+            return None, error
+        cameras = self._remember_cameras(config)
+        if cameras is None:
+            return None, "VISION_HUB_MALFORMED"
+        return cameras, None
+
+    def _known_camera(self, camera_id):
         ident = safe_camera_id(camera_id)
-        view = self.camera_view()
-        if not view.get("available"):
-            return None, view
-        for camera in view["cameras"]:
-            if camera["id"] == ident:
-                return camera, view
-        return None, {"available": True, "reason": "UNKNOWN_CAMERA", "cameras": view["cameras"]}
+        if ident is None:
+            return None, "UNKNOWN_CAMERA"
+        cameras = self._camera_cache if isinstance(self._camera_cache, dict) else None
+        if cameras is None or ident not in cameras:
+            cameras, error = self._config_cameras()
+            if error:
+                return None, error
+        raw = cameras.get(ident) if isinstance(cameras, dict) else None
+        if not isinstance(raw, dict):
+            return None, "UNKNOWN_CAMERA"
+        return {"id": ident, "capabilities": capabilities_for(raw)}, None
 
     def track(self, camera_id, enabled):
-        camera, view = self._camera(camera_id)
+        camera, reason = self._known_camera(camera_id)
         if camera is None:
-            reason = view.get("reason") or "UNKNOWN_CAMERA"
             return {"accepted": False, "reason": reason}
         if "track" not in camera["capabilities"]:
             return {"accepted": False, "reason": "CAPABILITY_UNAVAILABLE"}
@@ -301,28 +325,31 @@ class VisionHub:
             return {"accepted": False, "reason": "VISION_HUB_HTTP"}
         return {"accepted": True, "reason": "TRACK_UPDATED", "camera": camera["id"], "tracking": enabled}
 
-    def ptz(self, camera_id, direction):
-        camera, view = self._camera(camera_id)
-        if camera is None:
-            return {"accepted": False, "reason": view.get("reason") or "UNKNOWN_CAMERA"}
-        if "ptz" not in camera["capabilities"]:
-            return {"accepted": False, "reason": "CAPABILITY_UNAVAILABLE"}
-        direction = _text(direction)
-        if direction not in PTZ_DIRECTIONS:
-            return {"accepted": False, "reason": "MALFORMED_PARAMETERS"}
+    def _dispatch_ptz(self, ident, direction):
         status, _header, _body, error = self._request(
-            self.hub_base + "/ptz/" + camera["id"],
+            self.hub_base + "/ptz/" + ident,
             method="POST",
             payload={"dir": direction, "action": "stop" if direction == "stop" else "start"},
         )
         if error or status is None or status >= 400:
             return {"accepted": False, "reason": error or "VISION_HUB_HTTP"}
-        return {"accepted": True, "reason": "PTZ_SENT", "camera": camera["id"], "dir": direction}
+        return {"accepted": True, "reason": "PTZ_SENT", "camera": ident, "dir": direction}
+
+    def ptz(self, camera_id, direction):
+        direction = _text(direction)
+        if direction not in PTZ_DIRECTIONS:
+            return {"accepted": False, "reason": "MALFORMED_PARAMETERS"}
+        camera, reason = self._known_camera(camera_id)
+        if camera is None:
+            return {"accepted": False, "reason": reason}
+        if "ptz" not in camera["capabilities"]:
+            return {"accepted": False, "reason": "CAPABILITY_UNAVAILABLE"}
+        return self._dispatch_ptz(camera["id"], direction)
 
     def snapshot(self, camera_id):
-        camera, view = self._camera(camera_id)
+        camera, reason = self._known_camera(camera_id)
         if camera is None:
-            return None, view.get("reason") or "UNKNOWN_CAMERA"
+            return None, reason
         if "snapshot" not in camera["capabilities"]:
             return None, "CAPABILITY_UNAVAILABLE"
         status, header, body, error = self._request(self.service_base + "/snapshot/" + camera["id"])
