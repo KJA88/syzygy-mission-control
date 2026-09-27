@@ -75,14 +75,15 @@ field. The operational card reads `state_engine.operational` only.
 ## Authoritative operational state
 
 Guardian observations remain evidence. The authoritative operational record is a
-separate object, `state_engine.operational`, written only by Guardian through
-`state/operational-state.json`. The UI does not write it. It does not change
-the system health rollup and it does not command the arm.
+separate object, `state_engine.operational`, stored in
+`state/operational-state.json`. The RoArm skill owner in the Mission Control
+process is the only writer. Guardian reads that file and publishes it. Guardian
+does not recover or overwrite it. The record does not change the system health
+rollup.
 
-Phase 2 provides the authoritative state model, the store, and the transition
-API. There is intentionally no external or live transition ingress yet.
-Guardian currently recovers and publishes the state. Phase 3 skills and
-controller integration will invoke transitions.
+Phase 2 provides the state model, the store, and the transition API. Phase 3
+invokes those transitions from named skill requests. There is no second state
+machine and no approval queue.
 
 States: `IDLE`, `PREPARING`, `MOVING`, `COMPLETE`, `FAULT`, `STOPPED`.
 
@@ -114,6 +115,14 @@ A stale Guardian heartbeat does not present `PREPARING` or `MOVING` as the
 current operational state. Those claims become unknown until a fresh Guardian
 cycle. Other fields that lack a value stay unknown.
 
+The control owner writes an adjacent lease, `state/control-owner.json`, about
+every 10 seconds and on each transition. Guardian only reads it. If that
+heartbeat is older than the lease (45 seconds) or missing, Guardian does not
+publish `PREPARING` or `MOVING` as current. The published state becomes
+unknown, `recorded_state` keeps the prior value, `motion_permitted` is false,
+and the system health rollup is unchanged. A new owner process still recovers
+`PREPARING` or `MOVING` to `STOPPED` with `RECOVERY_UNPROVEN_MOTION`.
+
 ## Planned adapters
 
 Adapters must be added one at a time with fixtures, freshness rules, and live
@@ -124,5 +133,7 @@ verification:
 3. DHRAS detection/scene summaries
 4. RoArm read-only controller, pose, joints, gripper, and authorization state
 
-RoArm motion enforcement and high-level robot skills remain Phase 3.
-Phase 2 does not gate the live command path on `motion_permitted`.
+The Phase 3 skill owner gates named motion on the operational record: one
+authority, no active fault, and no uncleared stop. `motion_permitted` is still
+a state-engine fact. It is not an industrial interlock. Torque-off stays a
+separate production command and is not implied by STOP.

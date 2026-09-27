@@ -80,8 +80,45 @@
 
     <section class="card" aria-labelledby="operational-heading">
       <div class="card-head"><h2 id="operational-heading">Operational state</h2></div>
-      <p class="hint">Authoritative commanded state, separate from Guardian observations. This does not enforce arm motion.</p>
+      <p class="hint">Authoritative commanded state from the RoArm control owner, separate from Guardian observations.</p>
       <div id="operational"></div>
+    </section>
+
+    <section class="card" aria-labelledby="control-heading">
+      <div class="card-head"><h2 id="control-heading">RoArm control</h2></div>
+      <p class="hint">Named skills run automatically when the lightweight gate accepts them. Gripper open/close is not available: the production command layer has no standalone gripper command.</p>
+      <div class="control-grid">
+        <label>Authority <input id="ctrl-authority" value="manual" autocomplete="off"></label>
+        <label>Operator <input id="ctrl-operator" value="manual" autocomplete="off"></label>
+        <label>Mission <input id="ctrl-mission" placeholder="optional" autocomplete="off"></label>
+        <label>X <input id="ctrl-x" inputmode="decimal" autocomplete="off"></label>
+        <label>Y <input id="ctrl-y" inputmode="decimal" autocomplete="off"></label>
+        <label>Z <input id="ctrl-z" inputmode="decimal" autocomplete="off"></label>
+        <label>Tilt <input id="ctrl-t" placeholder="optional" inputmode="decimal" autocomplete="off"></label>
+        <label>Roll <input id="ctrl-r" placeholder="optional" inputmode="decimal" autocomplete="off"></label>
+        <label>Speed <input id="ctrl-spd" placeholder="optional" inputmode="decimal" autocomplete="off"></label>
+      </div>
+      <div class="control-actions">
+        <button type="button" id="ctrl-move">Move to pose</button>
+        <button type="button" id="ctrl-home">Return/Home</button>
+        <label>Pattern
+          <select id="ctrl-pattern">
+            <option value="lissajous">lissajous</option>
+            <option value="circle">circle</option>
+            <option value="spiral">spiral</option>
+          </select>
+        </label>
+        <button type="button" id="ctrl-pattern-run">Run pattern</button>
+        <button type="button" id="ctrl-stop">STOP</button>
+        <button type="button" id="ctrl-clear">Clear stopped/fault</button>
+      </div>
+      <h3 class="control-label">Engineering / direct control</h3>
+      <p class="hint">Deliberate low-level JSON for diagnostics. Autonomous and mission code must use named skills. This uses the same motion ownership rule and stays on this LAN server.</p>
+      <textarea id="ctrl-json" rows="3" spellcheck="false">{"T":105}</textarea>
+      <div class="control-actions">
+        <button type="button" id="ctrl-json-send">Send engineering JSON</button>
+      </div>
+      <pre id="control-result" class="control-result">No request yet</pre>
     </section>
 
     <section class="card" aria-labelledby="roarm-heading">

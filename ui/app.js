@@ -26,6 +26,7 @@
     paths: document.getElementById("paths"),
     pathsCount: document.getElementById("paths-count"),
     operational: document.getElementById("operational"),
+    controlResult: document.getElementById("control-result"),
     roarm: document.getElementById("roarm"),
     auth: document.getElementById("auth"),
     authSummary: document.getElementById("auth-summary"),
@@ -538,6 +539,98 @@
         );
       })
       .join("");
+  }
+
+  function controlValue(id) {
+    const node = document.getElementById(id);
+    return node ? node.value.trim() : "";
+  }
+
+  function optionalNumber(id) {
+    const text = controlValue(id);
+    if (!text) return undefined;
+    const value = Number(text);
+    return Number.isFinite(value) ? value : text;
+  }
+
+  async function postSkill(body) {
+    const response = await fetch("/api/roarm/skills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json();
+    if (els.controlResult) els.controlResult.textContent = JSON.stringify(payload, null, 2);
+    tick();
+  }
+
+  async function postEngineering(packet) {
+    const response = await fetch("/api/roarm/engineering", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        packet: packet,
+        authority: controlValue("ctrl-authority") || "manual",
+        operator: controlValue("ctrl-operator") || "manual",
+        mission: controlValue("ctrl-mission") || null,
+      }),
+    });
+    const payload = await response.json();
+    if (els.controlResult) els.controlResult.textContent = JSON.stringify(payload, null, 2);
+    tick();
+  }
+
+  function skillBody(skill, params) {
+    return {
+      skill: skill,
+      authority: controlValue("ctrl-authority") || "manual",
+      operator: controlValue("ctrl-operator") || "manual",
+      mission: controlValue("ctrl-mission") || null,
+      params: params || {},
+    };
+  }
+
+  const moveButton = document.getElementById("ctrl-move");
+  if (moveButton) {
+    moveButton.addEventListener("click", function () {
+      const params = {
+        x: optionalNumber("ctrl-x"),
+        y: optionalNumber("ctrl-y"),
+        z: optionalNumber("ctrl-z"),
+      };
+      const tilt = optionalNumber("ctrl-t");
+      const roll = optionalNumber("ctrl-r");
+      const speed = optionalNumber("ctrl-spd");
+      if (tilt !== undefined) params.t = tilt;
+      if (roll !== undefined) params.r = roll;
+      if (speed !== undefined) params.spd = speed;
+      postSkill(skillBody("move_to_pose", params));
+    });
+  }
+  const homeButton = document.getElementById("ctrl-home");
+  if (homeButton) homeButton.addEventListener("click", function () { postSkill(skillBody("return_home", {})); });
+  const patternButton = document.getElementById("ctrl-pattern-run");
+  if (patternButton) {
+    patternButton.addEventListener("click", function () {
+      postSkill(skillBody("run_pattern", { pattern: controlValue("ctrl-pattern") }));
+    });
+  }
+  const stopButton = document.getElementById("ctrl-stop");
+  if (stopButton) stopButton.addEventListener("click", function () { postSkill(skillBody("stop", {})); });
+  const clearButton = document.getElementById("ctrl-clear");
+  if (clearButton) clearButton.addEventListener("click", function () { postSkill(skillBody("clear", {})); });
+  const jsonButton = document.getElementById("ctrl-json-send");
+  if (jsonButton) {
+    jsonButton.addEventListener("click", function () {
+      let packet = null;
+      try {
+        packet = JSON.parse(controlValue("ctrl-json") || document.getElementById("ctrl-json").value);
+      } catch (err) {
+        if (els.controlResult) els.controlResult.textContent = "Malformed engineering JSON";
+        return;
+      }
+      postEngineering(packet);
+    });
   }
 
   function renderOperational(snap) {
