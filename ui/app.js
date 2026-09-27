@@ -327,13 +327,21 @@
     const row = function (label, item) {
       return "<div>" + esc(label) + ": <strong>" + esc(value(item)) + "</strong></div>";
     };
+    const statusUpdatedMs = Date.parse(roarm.transport_status_updated_at);
+    const statusAge = Number.isFinite(statusUpdatedMs)
+      ? (Date.now() - statusUpdatedMs) / 1000
+      : roarm.transport_status_age_s;
+    const recordFresh = roarm.transport_status_fresh === true;
     const transportLabel = function (state) {
-      if (state === "serial" || state === "usb") return "unavailable";
+      if (!recordFresh || state === "serial" || state === "usb") return "unavailable";
       if (state === "udp") return "UDP trajectory active";
       if (state === "http") return "HTTP";
       if (state === "idle") return "idle";
       return "unavailable";
     };
+    const statusRecord = roarm.transport_status_updated_at
+      ? (recordFresh ? "fresh" : "stale") + " · age " + fmtAge(statusAge)
+      : "unavailable";
     const routeLabel = function () {
       if (route.status === "ok") return "wlan0 192.168.4.2 -> 192.168.4.1";
       if (route.status === "wrong_interface") {
@@ -363,7 +371,9 @@
     };
     const streamLabel = roarm.stream_id == null
       ? "unavailable"
-      : String(roarm.stream_id) + (roarm.stream_role === "current" ? " (current)" : " (last)");
+      : String(roarm.stream_id) + (
+        recordFresh && roarm.stream_role === "current" ? " (current)" : " (last)"
+      );
 
     els.roarm.innerHTML =
       '<article class="entity roarm-card"><div class="entity-head"><div class="entity-id">RoArm-M3</div>' +
@@ -375,6 +385,7 @@
       row("Route", routeLabel()) +
       row("T105", freshness + " · age " + fmtAge(observationAge)) +
       row("Transport state", transportLabel(roarm.transport_state)) +
+      row("Status record", statusRecord) +
       row("UDP target", roarm.udp_target || "192.168.4.1:4210") +
       row("Stream ID", streamLabel) +
       row("Last sequence", roarm.last_sequence) +
@@ -425,6 +436,7 @@
     ROARM_UNREACHABLE: "The RoArm did not answer the state check.",
     ARM_ROUTE_WRONG_INTERFACE: "The RoArm route is not on wlan0.",
     ARM_ROUTE_WRONG_SOURCE: "The RoArm route is not from the Pi address 192.168.4.2.",
+    ARM_ROUTE_UNAVAILABLE: "The route to the RoArm could not be read.",
     ROARM_SERIAL_REJECTED: "USB/serial is not a RoArm runtime path.",
     PATTERN_UDP_LATE: "The UDP trajectory sender fell behind and stopped.",
     PATTERN_UDP_FAILED: "A UDP trajectory send failed.",

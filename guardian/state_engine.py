@@ -69,38 +69,69 @@ def _entity(identifier, kind, attributes):
     return {"id": identifier, "kind": kind, "attributes": attributes}
 
 
+def _seen(value, missing_reason, source, observed_at, freshness, trace):
+    if value is None or value == "":
+        return unknown(source, trace, missing_reason)
+    return assertion(
+        value, "observed", freshness, source, observed_at, trace, confidence=1.0)
+
+
 def _roarm_attributes(roarm, trace):
-    """Communication facts already collected by the RoArm probe."""
+    """Communication facts already collected by the RoArm probe.
+
+    T105 evidence uses the probe timestamp. Transport-status evidence uses
+    the status file's own updated_at and is stale on that clock alone.
+    """
     source = "guardian/roarm"
-    observed_at = roarm.get("observed_at")
-    freshness = "fresh" if observed_at else "unknown"
-
-    def seen(value, missing_reason):
-        if value is None or value == "":
-            return unknown(source, trace, missing_reason)
-        return assertion(
-            value, "observed", freshness, source, observed_at, trace, confidence=1.0)
-
+    t105_at = roarm.get("t105_observed_at") or roarm.get("observed_at")
+    t105_freshness = "fresh" if roarm.get("t105_fresh") is True and t105_at else "unknown"
+    updated_at = roarm.get("transport_status_updated_at")
+    if roarm.get("transport_status_fresh") is True and updated_at:
+        transport_freshness = "fresh"
+    elif updated_at:
+        transport_freshness = "stale"
+    else:
+        transport_freshness = "unknown"
     failure = roarm.get("failure_reason")
     if not failure and roarm.get("class") and roarm.get("error"):
         failure = str(roarm.get("error"))
     route = roarm.get("route") if isinstance(roarm.get("route"), dict) else {}
     return {
-        "reachability": seen(roarm.get("reachability"), "EVIDENCE_MISSING"),
-        "route": seen(route.get("status"), "ROUTE_UNAVAILABLE"),
-        "t105_fresh": seen(roarm.get("t105_fresh"), "T105_UNAVAILABLE"),
-        "transport_state": seen(roarm.get("transport_state"), "TRANSPORT_STATUS_UNAVAILABLE"),
+        "reachability": _seen(
+            roarm.get("reachability"), "EVIDENCE_MISSING", source,
+            t105_at, t105_freshness, trace),
+        "route": _seen(
+            route.get("status"), "ROUTE_UNAVAILABLE", source,
+            t105_at, t105_freshness, trace),
+        "t105_fresh": _seen(
+            roarm.get("t105_fresh"), "T105_UNAVAILABLE", source,
+            t105_at, t105_freshness, trace),
+        "transport_state": _seen(
+            roarm.get("transport_state"), "TRANSPORT_STATUS_UNAVAILABLE", source,
+            updated_at, transport_freshness, trace),
         "udp_target": assertion(
             roarm.get("udp_target") or "192.168.4.1:4210",
             "configured", "fresh", "guardian/config", None, trace, confidence=1.0),
-        "stream_id": seen(roarm.get("stream_id"), "STREAM_ID_UNAVAILABLE"),
-        "last_sequence": seen(roarm.get("last_sequence"), "SEQUENCE_UNAVAILABLE"),
-        "last_completion": seen(roarm.get("last_completion"), "COMPLETION_UNAVAILABLE"),
-        "udp_late": seen(roarm.get("last_late"), "LATE_SEND_UNAVAILABLE"),
-        "udp_failed": seen(roarm.get("last_failed"), "FAILED_SEND_UNAVAILABLE"),
-        "watchdog_release": seen(roarm.get("last_watchdog"), "WATCHDOG_RELEASE_UNAVAILABLE"),
+        "stream_id": _seen(
+            roarm.get("stream_id"), "STREAM_ID_UNAVAILABLE", source,
+            updated_at, transport_freshness, trace),
+        "last_sequence": _seen(
+            roarm.get("last_sequence"), "SEQUENCE_UNAVAILABLE", source,
+            updated_at, transport_freshness, trace),
+        "last_completion": _seen(
+            roarm.get("last_completion"), "COMPLETION_UNAVAILABLE", source,
+            updated_at, transport_freshness, trace),
+        "udp_late": _seen(
+            roarm.get("last_late"), "LATE_SEND_UNAVAILABLE", source,
+            updated_at, transport_freshness, trace),
+        "udp_failed": _seen(
+            roarm.get("last_failed"), "FAILED_SEND_UNAVAILABLE", source,
+            updated_at, transport_freshness, trace),
+        "watchdog_release": _seen(
+            roarm.get("last_watchdog"), "WATCHDOG_RELEASE_UNAVAILABLE", source,
+            updated_at, transport_freshness, trace),
         "failure_reason": (
-            seen(failure, "NO_ACTIVE_FAULT")
+            _seen(failure, "NO_ACTIVE_FAULT", source, t105_at, t105_freshness, trace)
             if failure else unknown(source, trace, "NO_ACTIVE_FAULT")
         ),
         "serial_fallback": assertion(

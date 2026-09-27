@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
-from .model import stamp, utcnow
+from .model import age, stamp, utcnow
 
 
 ARM_HOST = '192.168.4.1'
@@ -18,6 +18,7 @@ PI_SOURCE = '192.168.4.2'
 ROUTE_DEVICE = 'wlan0'
 UDP_PORT = 4210
 UDP_TARGET = '192.168.4.1:4210'
+TRANSPORT_STATUS_FRESH_S = 90
 STATUS_PATH = Path('/tmp/roarm-pattern-command/transport-status.json')
 _TRANSPORT_STATES = {'idle', 'http', 'udp'}
 _ACTIVE_FAILURES = {'PATTERN_UDP_LATE', 'PATTERN_UDP_FAILED'}
@@ -142,7 +143,16 @@ def _normalize_record(record):
         'active_failure': active_failure,
         'failure_detail': detail if isinstance(detail, str) and detail else None,
         'serial_rejected': serial_rejected,
+        'updated_at': record.get('updated_at') if isinstance(record.get('updated_at'), str) else None,
     }
+
+
+def _status_is_fresh(updated_at):
+    """Freshness belongs to the status file clock, not the T105 sample."""
+    elapsed = age(updated_at, utcnow())
+    if elapsed is None or elapsed > TRANSPORT_STATUS_FRESH_S:
+        return elapsed, False
+    return elapsed, True
 
 
 def _apply_communication(observed, route, record):
@@ -166,25 +176,63 @@ def _apply_communication(observed, route, record):
             last_late=None,
             last_failed=None,
             last_watchdog=None,
+            transport_status_updated_at=None,
+            transport_status_age_s=None,
+            transport_status_fresh=None,
         )
     else:
+        updated_at = normalized['updated_at']
+        status_age, status_fresh = _status_is_fresh(updated_at)
+        current_udp = (
+            status_fresh
+            and normalized['active']
+            and normalized['transport_state'] == 'udp'
+            and not normalized['serial_rejected']
+        )
         stream_id = normalized['stream_id']
-        if normalized['active'] and normalized['transport_state'] == 'udp':
+        if current_udp:
             stream_role = 'current'
-        elif stream_id is not None:
-            stream_role = 'last'
+            transport_state = 'udp'
+            last_sequence = None
         else:
-            stream_role = None
+            stream_role = 'last' if stream_id is not None else None
+            last_sequence = (
+                None
+                if status_fresh and normalized['active']
+                else normalized['last_sequence']
+            )
+            if normalized['serial_rejected'] or not status_fresh:
+                transport_state = None
+            elif normalized['active'] and normalized['transport_state'] == 'udp':
+                transport_state = None
+            else:
+                transport_state = normalized['transport_state']
         observed.update(
-            transport_state=None if normalized['serial_rejected'] else normalized['transport_state'],
+            transport_state=transport_state,
             stream_id=stream_id,
             stream_role=stream_role,
-            last_sequence=normalized['last_sequence'],
+            last_sequence=last_sequence,
             last_completion=normalized['last_completion'],
             last_late=normalized['last_late'],
             last_failed=normalized['last_failed'],
             last_watchdog=normalized['last_watchdog'],
+            transport_status_updated_at=updated_at,
+            transport_status_age_s=status_age,
+            transport_status_fresh=status_fresh,
         )
+    if route['status'] == 'unavailable':
+        reason = (
+            'RoArm route probe is unavailable; expected %s from %s to %s'
+            % (ROUTE_DEVICE, PI_SOURCE, ARM_HOST)
+        )
+        if not connected and observed.get('error'):
+            reason += '. RoArm unreachable: ' + str(observed.get('error'))
+        observed.update(
+            status='yellow',
+            failure_reason=reason,
+            **{'class': 'ARM_ROUTE_UNAVAILABLE'},
+        )
+        return observed
     if not connected:
         reason = 'RoArm unreachable'
         error = observed.get('error')

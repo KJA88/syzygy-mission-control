@@ -1,5 +1,6 @@
 import inspect
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -26,10 +27,20 @@ class MockResponse:
         return self.body
 
 
+GOOD_ROUTE = '192.168.4.1 dev wlan0 src 192.168.4.2'
+
+
+def _iso(seconds_ago=0):
+    moment = datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)
+    return moment.isoformat().replace('+00:00', 'Z')
+
+
 class RoArmProbeTests(unittest.TestCase):
     def probe_with(self, payload):
         response = MockResponse(json.dumps(payload).encode('utf-8'))
-        with patch('guardian.roarm.urlopen', return_value=response) as opener:
+        with patch('guardian.roarm.urlopen', return_value=response) as opener, \
+                patch('guardian.roarm.read_arm_route', return_value=GOOD_ROUTE), \
+                patch('guardian.roarm.read_transport_status', return_value=None):
             result = roarm.probe_roarm('http://192.168.4.1/', timeout_s=1.5)
         return result, opener
 
@@ -67,13 +78,17 @@ class RoArmProbeTests(unittest.TestCase):
 
     def test_malformed_json_becomes_unknown(self):
         response = MockResponse(b'not-json')
-        with patch('guardian.roarm.urlopen', return_value=response):
+        with patch('guardian.roarm.urlopen', return_value=response), \
+                patch('guardian.roarm.read_arm_route', return_value=GOOD_ROUTE), \
+                patch('guardian.roarm.read_transport_status', return_value=None):
             result = roarm.probe_roarm('http://192.168.4.1')
         self.assertEqual(result['status'], 'unknown')
         self.assertEqual(result['class'], 'ROARM_UNREACHABLE')
 
     def test_timeout_becomes_unknown(self):
-        with patch('guardian.roarm.urlopen', side_effect=TimeoutError('timed out')):
+        with patch('guardian.roarm.urlopen', side_effect=TimeoutError('timed out')), \
+                patch('guardian.roarm.read_arm_route', return_value=GOOD_ROUTE), \
+                patch('guardian.roarm.read_transport_status', return_value=None):
             result = roarm.probe_roarm('http://192.168.4.1')
         self.assertEqual(result['status'], 'unknown')
         self.assertEqual(result['class'], 'ROARM_UNREACHABLE')
@@ -149,8 +164,17 @@ class RoArmGuardianTests(unittest.TestCase):
         self.assertEqual(snapshot['roarm']['class'], 'PATTERN_UDP_LATE')
         self.assertEqual(snapshot['system']['status'], 'green')
 
-
-GOOD_ROUTE = '192.168.4.1 dev wlan0 src 192.168.4.2'
+    def test_unavailable_route_does_not_change_system_status(self):
+        observed = {
+            'status': 'yellow',
+            'class': 'ARM_ROUTE_UNAVAILABLE',
+            'failure_reason': 'RoArm route probe is unavailable',
+            'connected': True,
+        }
+        with patch('guardian.aggregator.probe_roarm', return_value=observed):
+            snapshot = Guardian(self.cfg).tick()
+        self.assertEqual(snapshot['roarm']['class'], 'ARM_ROUTE_UNAVAILABLE')
+        self.assertEqual(snapshot['system']['status'], 'green')
 
 
 class RoArmCommunicationTests(unittest.TestCase):
@@ -200,11 +224,12 @@ class RoArmCommunicationTests(unittest.TestCase):
             },
             'last_late': {'at': '2026-09-27T02:00:00Z', 'sequence': 2, 'detail': 'behind'},
             'last_watchdog': None,
+            'updated_at': _iso(),
         })
         self.assertEqual(result['transport_state'], 'udp')
         self.assertEqual(result['stream_id'], 7)
         self.assertEqual(result['stream_role'], 'current')
-        self.assertEqual(result['last_sequence'], 12)
+        self.assertIsNone(result['last_sequence'])
         self.assertEqual(result['last_completion']['pattern'], 'lissajous')
         self.assertEqual(result['last_late']['sequence'], 2)
         self.assertIsNone(result['last_watchdog'])
@@ -220,11 +245,66 @@ class RoArmCommunicationTests(unittest.TestCase):
             'active_failure': 'PATTERN_UDP_LATE',
             'failure_detail': 'sequence 1 is behind by 0.100s',
             'last_late': {'sequence': 0, 'detail': 'sequence 1 is behind by 0.100s'},
+            'updated_at': _iso(),
         })
         self.assertEqual(result['status'], 'yellow')
         self.assertEqual(result['class'], 'PATTERN_UDP_LATE')
         self.assertEqual(result['failure_reason'], 'sequence 1 is behind by 0.100s')
         self.assertEqual(result['stream_role'], 'last')
+
+    def test_stale_active_record_is_not_a_current_udp_stream(self):
+        updated = _iso(600)
+        result = self.probe(record={
+            'transport_state': 'udp',
+            'active': True,
+            'stream_id': 5,
+            'last_sequence': 12,
+            'updated_at': updated,
+            'last_completion': {'pattern': 'circle', 'stream_id': 5, 'sequence': 12},
+            'last_late': {'sequence': 4, 'detail': 'behind'},
+        })
+        self.assertFalse(result['transport_status_fresh'])
+        self.assertNotEqual(result['transport_state'], 'udp')
+        self.assertEqual(result['stream_role'], 'last')
+        self.assertEqual(result['stream_id'], 5)
+        self.assertEqual(result['last_sequence'], 12)
+        self.assertEqual(result['last_completion']['pattern'], 'circle')
+        self.assertEqual(result['last_late']['sequence'], 4)
+        self.assertTrue(result['t105_fresh'])
+        self.assertNotEqual(result['transport_status_updated_at'], result['t105_observed_at'])
+        self.assertEqual(result['status'], 'green')
+        state = build_state({'trace_id': 'trace', 'roarm': result})
+        attributes = next(
+            item['attributes'] for item in state['entities'] if item['id'] == 'device/roarm'
+        )
+        self.assertEqual(attributes['last_sequence']['value'], 12)
+        self.assertEqual(attributes['last_sequence']['freshness'], 'stale')
+        self.assertEqual(attributes['last_sequence']['observed_at'], updated)
+        self.assertEqual(attributes['t105_fresh']['freshness'], 'fresh')
+        self.assertNotEqual(attributes['t105_fresh']['observed_at'], updated)
+        self.assertIsNone(attributes['transport_state']['value'])
+
+    def test_active_stream_hides_a_sequence_left_in_the_record(self):
+        result = self.probe(record={
+            'transport_state': 'udp',
+            'active': True,
+            'stream_id': 8,
+            'last_sequence': 300,
+            'updated_at': _iso(),
+        })
+        self.assertEqual(result['transport_state'], 'udp')
+        self.assertEqual(result['stream_role'], 'current')
+        self.assertTrue(result['transport_status_fresh'])
+        self.assertIsNone(result['last_sequence'])
+
+    def test_unavailable_route_is_yellow(self):
+        result = self.probe(route='ip route get failed')
+        self.assertEqual(result['status'], 'yellow')
+        self.assertEqual(result['class'], 'ARM_ROUTE_UNAVAILABLE')
+        self.assertEqual(result['reachability'], 'reachable')
+        self.assertIn('unavailable', result['failure_reason'])
+        self.assertIn('wlan0', result['failure_reason'])
+        self.assertIn('192.168.4.2', result['failure_reason'])
 
     def test_serial_record_is_rejected(self):
         result = self.probe(record={
@@ -303,9 +383,14 @@ class RoArmCommunicationTests(unittest.TestCase):
             'Watchdog release',
             'Failure',
             'UDP trajectory active',
+            'Status record',
+            'ARM_ROUTE_UNAVAILABLE',
         ):
             self.assertIn(label, source)
-        self.assertIn('if (state === "serial" || state === "usb") return "unavailable";', source)
+        self.assertIn(
+            'if (!recordFresh || state === "serial" || state === "usb") return "unavailable";',
+            source,
+        )
 
 
 if __name__ == '__main__':
