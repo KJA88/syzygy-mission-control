@@ -69,6 +69,45 @@ def _entity(identifier, kind, attributes):
     return {"id": identifier, "kind": kind, "attributes": attributes}
 
 
+def _roarm_attributes(roarm, trace):
+    """Communication facts already collected by the RoArm probe."""
+    source = "guardian/roarm"
+    observed_at = roarm.get("observed_at")
+    freshness = "fresh" if observed_at else "unknown"
+
+    def seen(value, missing_reason):
+        if value is None or value == "":
+            return unknown(source, trace, missing_reason)
+        return assertion(
+            value, "observed", freshness, source, observed_at, trace, confidence=1.0)
+
+    failure = roarm.get("failure_reason")
+    if not failure and roarm.get("class") and roarm.get("error"):
+        failure = str(roarm.get("error"))
+    route = roarm.get("route") if isinstance(roarm.get("route"), dict) else {}
+    return {
+        "reachability": seen(roarm.get("reachability"), "EVIDENCE_MISSING"),
+        "route": seen(route.get("status"), "ROUTE_UNAVAILABLE"),
+        "t105_fresh": seen(roarm.get("t105_fresh"), "T105_UNAVAILABLE"),
+        "transport_state": seen(roarm.get("transport_state"), "TRANSPORT_STATUS_UNAVAILABLE"),
+        "udp_target": assertion(
+            roarm.get("udp_target") or "192.168.4.1:4210",
+            "configured", "fresh", "guardian/config", None, trace, confidence=1.0),
+        "stream_id": seen(roarm.get("stream_id"), "STREAM_ID_UNAVAILABLE"),
+        "last_sequence": seen(roarm.get("last_sequence"), "SEQUENCE_UNAVAILABLE"),
+        "last_completion": seen(roarm.get("last_completion"), "COMPLETION_UNAVAILABLE"),
+        "udp_late": seen(roarm.get("last_late"), "LATE_SEND_UNAVAILABLE"),
+        "udp_failed": seen(roarm.get("last_failed"), "FAILED_SEND_UNAVAILABLE"),
+        "watchdog_release": seen(roarm.get("last_watchdog"), "WATCHDOG_RELEASE_UNAVAILABLE"),
+        "failure_reason": (
+            seen(failure, "NO_ACTIVE_FAULT")
+            if failure else unknown(source, trace, "NO_ACTIVE_FAULT")
+        ),
+        "serial_fallback": assertion(
+            False, "configured", "fresh", "guardian/config", None, trace, confidence=1.0),
+    }
+
+
 def build_state(snapshot):
     """Build schema-v1 operational state without changing source evidence."""
     trace = snapshot.get("trace_id")
@@ -134,6 +173,10 @@ def build_state(snapshot):
                     confidence=1.0 if camera.get("status") in ("green", "red") else None,
                     reason=camera.get("class")),
             }))
+
+    roarm = snapshot.get("roarm")
+    if isinstance(roarm, dict):
+        entities.append(_entity("device/roarm", "device", _roarm_attributes(roarm, trace)))
 
     return {
         "schema_version": 1,
