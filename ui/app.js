@@ -694,6 +694,7 @@
     renderRoarm(snap.roarm, snap.guardian, snap._ui);
     renderAuth(snap.auth, snap.services, snap.guardian, snap._ui);
     renderActivity(collectActivity(snap, eventsPayload));
+    renderOverview(snap, eventsPayload);
 
     const ui = snap._ui || {};
     els.servedMeta.textContent =
@@ -702,6 +703,315 @@
       " · stale>" +
       (ui.hard_stale_s != null ? ui.hard_stale_s + "s" : "120s") +
       (ui.error ? " · " + ui.error : "");
+  }
+
+  function setText(id, value) {
+    const node = document.getElementById(id);
+    if (node) node.textContent = value == null || value === "" ? "unknown" : String(value);
+  }
+
+  function renderOverview(snap, eventsPayload) {
+    const sys = (snap && snap.system) || {};
+    const op = snap && snap.state_engine && snap.state_engine.operational;
+    const roarm = (snap && snap.roarm) || {};
+    const events = collectActivity(snap, eventsPayload);
+    const latest = events.length ? events[0].message || events[0].class || "activity" : "No events yet";
+    setText("overview-system", (sys.status || "unknown").toUpperCase());
+    setText("overview-alerts", op && (op.fault_class || op.fault_reason) ? (op.fault_class || op.fault_reason) : "None");
+    setText("overview-operational", op && op.state ? op.state : "unknown");
+    setText("overview-robots", roarm.status ? String(roarm.status).toUpperCase() : "unknown");
+    setText("overview-activity", latest);
+  }
+
+  function badgeList(items) {
+    return (items || []).map(function (item) {
+      return '<span class="pill">' + esc(item) + "</span>";
+    }).join(" ");
+  }
+
+  let ptzTimer = null;
+  let ptzCamera = null;
+  let ptzDown = false;
+
+  function sendPtz(camera, dir) {
+    const request = fetch("/api/perception/ptz", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ camera: camera, dir: dir }),
+    });
+    if (dir === "stop") {
+      request.catch(function () {});
+      return;
+    }
+    request.then(function (response) { return response.json(); }).then(function (payload) {
+      setText("perception-status", (payload && payload.reason) || "requested");
+    }).catch(function () {
+      setText("perception-status", "Perception UNKNOWN / OFFLINE");
+    });
+  }
+
+  function releasePtz() {
+    ptzDown = false;
+    if (ptzTimer) {
+      clearInterval(ptzTimer);
+      ptzTimer = null;
+    }
+    if (!ptzCamera) return;
+    const camera = ptzCamera;
+    ptzCamera = null;
+    sendPtz(camera, "stop");
+  }
+
+  function holdPtz(camera, dir) {
+    if (ptzTimer) {
+      clearInterval(ptzTimer);
+      ptzTimer = null;
+    }
+    ptzCamera = camera;
+    sendPtz(camera, dir);
+    ptzTimer = setInterval(function () { sendPtz(camera, dir); }, 300);
+  }
+
+  function cameraSignature(camera) {
+    return [
+      camera.id,
+      camera.name,
+      camera.parent_id || "",
+      camera.type || "",
+      (camera.capabilities || []).join("|"),
+      camera.stream_url || "",
+      camera.hub_url || "",
+    ].join("~");
+  }
+
+  function cameraCard(camera) {
+    const caps = camera.capabilities || [];
+    const controls = [];
+    if (caps.indexOf("ptz") >= 0) {
+      ["left", "right", "up", "down", "stop"].forEach(function (dir) {
+        controls.push('<button type="button" data-ptz="' + esc(dir) + '" data-camera="' + esc(camera.id) + '">' + esc(dir) + "</button>");
+      });
+    }
+    if (caps.indexOf("track") >= 0) {
+      controls.push('<button type="button" data-track="on" data-camera="' + esc(camera.id) + '">Track on</button>');
+      controls.push('<button type="button" data-track="off" data-camera="' + esc(camera.id) + '">Track off</button>');
+    }
+    if (caps.indexOf("snapshot") >= 0) {
+      controls.push('<button type="button" data-snap="' + esc(camera.id) + '">Snapshot</button>');
+    }
+    const stream = caps.indexOf("stream") >= 0 && camera.stream_url
+      ? '<img class="cam-stream" alt="' + esc(camera.name) + '" src="' + esc(camera.stream_url) + '" data-src="' + esc(camera.stream_url) + '">'
+      : "";
+    const event = camera.last_event
+      ? esc(camera.last_event.class || "detection") + " · " + esc(camera.last_event.timestamp || "")
+      : "No recent detection";
+    return '<article class="card cam-card" data-camera-card="' + esc(camera.id) + '">' +
+      "<h2>" + esc(camera.name) + "</h2>" +
+      '<p class="cam-health">' + esc(camera.health || "unknown") + (camera.mode ? " · " + esc(camera.mode) : "") + "</p>" +
+      "<p>Parent: " + esc(camera.parent_id || "none") + "</p>" +
+      '<p class="cam-event">' + event + "</p>" +
+      "<p>" + badgeList(caps) + "</p>" +
+      stream +
+      (camera.hub_url ? '<p><a href="' + esc(camera.hub_url) + '" target="_blank" rel="noopener">Open Vision Hub</a></p>' : "") +
+      '<div class="control-actions">' + controls.join("") + "</div></article>";
+  }
+
+  function ptzButton(event) {
+    const button = event && event.target;
+    if (!button || !button.getAttribute || !button.getAttribute("data-ptz")) return null;
+    return button;
+  }
+
+  function pressPtz(event) {
+    const button = ptzButton(event);
+    if (!button) return;
+    if (event.cancelable && event.preventDefault) event.preventDefault();
+    const camera = button.getAttribute("data-camera");
+    const dir = button.getAttribute("data-ptz");
+    if (dir === "stop") {
+      releasePtz();
+      sendPtz(camera, "stop");
+      return;
+    }
+    if (ptzDown && (event.type === "mousedown" || event.type === "touchstart")) return;
+    ptzDown = true;
+    if (button.getAttribute("data-leave") !== "yes") {
+      button.setAttribute("data-leave", "yes");
+      button.addEventListener("mouseleave", function () { releasePtz(); });
+    }
+    holdPtz(camera, dir);
+  }
+
+  function bindCameraGrid(grid) {
+    if (!grid || grid.getAttribute("data-bound") === "yes") return;
+    grid.setAttribute("data-bound", "yes");
+    grid.addEventListener("pointerdown", pressPtz);
+    grid.addEventListener("mousedown", pressPtz);
+    grid.addEventListener("touchstart", pressPtz);
+    grid.addEventListener("click", function (event) {
+      const button = event.target;
+      if (!button || !button.getAttribute || button.getAttribute("data-ptz")) return;
+      const camera = button.getAttribute("data-camera") || button.getAttribute("data-snap");
+      if (button.getAttribute("data-track")) {
+        postPerception("/api/perception/track", { camera: camera, enabled: button.getAttribute("data-track") === "on" });
+      } else if (button.getAttribute("data-snap")) {
+        window.open("/api/perception/snapshot/" + encodeURIComponent(button.getAttribute("data-snap")), "_blank", "noopener");
+      }
+    });
+  }
+
+  if (typeof window !== "undefined" && window.addEventListener) {
+    window.addEventListener("pointerup", releasePtz);
+    window.addEventListener("pointercancel", releasePtz);
+    window.addEventListener("touchend", releasePtz);
+    window.addEventListener("mouseup", releasePtz);
+    window.addEventListener("blur", releasePtz);
+  }
+
+  async function postPerception(url, body) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json();
+    setText("perception-status", (payload && payload.reason) || "requested");
+  }
+
+  function renderCameras(view) {
+    const grid = document.getElementById("cam-grid");
+    const status = document.getElementById("perception-status");
+    const link = document.getElementById("vision-hub-link");
+    if (!view || view.available !== true) {
+      if (status) status.textContent = "Perception UNKNOWN / OFFLINE";
+      setText("overview-perception", "UNKNOWN / OFFLINE");
+      if (grid && grid.setAttribute) {
+        grid.innerHTML = "";
+        grid.setAttribute("data-cams", "");
+      }
+      return;
+    }
+    if (status) status.textContent = view.cameras.length + " cameras";
+    setText("overview-perception", view.cameras.length + " cameras");
+    if (link && view.hub_url) link.href = view.hub_url;
+    if (!grid) return;
+    const signature = view.cameras.map(cameraSignature).join(",");
+    if (grid.getAttribute("data-cams") !== signature) {
+      releasePtz();
+      grid.innerHTML = view.cameras.map(cameraCard).join("");
+      grid.setAttribute("data-cams", signature);
+      bindCameraGrid(grid);
+    } else {
+      view.cameras.forEach(function (camera) {
+        const card = grid.querySelector('[data-camera-card="' + camera.id + '"]');
+        if (!card) return;
+        const health = card.querySelector(".cam-health");
+        const recent = card.querySelector(".cam-event");
+        if (health) health.textContent = (camera.health || "unknown") + (camera.mode ? " · " + camera.mode : "");
+        if (recent) {
+          recent.textContent = camera.last_event
+            ? (camera.last_event.class || "detection") + " · " + (camera.last_event.timestamp || "")
+            : "No recent detection";
+        }
+      });
+    }
+  }
+
+  function renderDetections(payload, targetId) {
+    const node = document.getElementById(targetId);
+    if (!node) return;
+    const events = payload && Array.isArray(payload.events) ? payload.events : [];
+    if (!payload || payload.available === false) {
+      node.innerHTML = "<p>Detections unavailable</p>";
+      return;
+    }
+    node.innerHTML = events.length
+      ? events.map(function (event) {
+          return "<p>" + esc(event.timestamp || "") + " · " + esc(event.camera || "") + " · " + esc(event.class || "detection") + "</p>";
+        }).join("")
+      : "<p>No detections</p>";
+  }
+
+  function renderSnapshots(payload) {
+    const node = document.getElementById("snapshot-grid");
+    if (!node) return;
+    const images = payload && Array.isArray(payload.snapshots) ? payload.snapshots : [];
+    if (!payload || payload.available === false) {
+      node.textContent = "Snapshots unavailable";
+      return;
+    }
+    node.innerHTML = images.map(function (image) {
+      const src = "/api/perception/media?path=" + encodeURIComponent(image.path);
+      return '<article class="card"><h2>' + esc(image.camera || image.name || "snapshot") + "</h2>" +
+        '<img class="cam-stream" alt="' + esc(image.name || "snapshot") + '" src="' + src + '"></article>';
+    }).join("") || "<p>No snapshots</p>";
+  }
+
+  function renderDevices(payload) {
+    const node = document.getElementById("device-list");
+    if (!node || !payload || !Array.isArray(payload.devices)) return;
+    node.innerHTML = payload.devices.map(function (device) {
+      return '<article class="card"><h2>' + esc(device.display_name) + "</h2>" +
+        "<p>" + esc(device.kind) + " · " + esc(device.health || "unknown") + "</p>" +
+        "<p>" + esc(device.provider) + " / " + esc(device.provider_id) + "</p>" +
+        "<p>Parent: " + esc(device.parent_id || "none") + "</p>" +
+        "<p>" + badgeList(device.capabilities) + "</p></article>";
+    }).join("");
+  }
+
+  async function refreshPerception() {
+    try {
+      const responses = await Promise.all([
+        fetch("/api/perception/cameras", { cache: "no-store" }),
+        fetch("/api/devices", { cache: "no-store" }),
+        fetch("/api/perception/events?limit=30", { cache: "no-store" }),
+        fetch("/api/perception/snapshots?limit=12", { cache: "no-store" }),
+      ]);
+      const payloads = [];
+      for (let index = 0; index < responses.length; index += 1) {
+        payloads.push(responses[index].ok ? await responses[index].json() : null);
+      }
+      renderCameras(payloads[0]);
+      renderDevices(payloads[1]);
+      renderDetections(payloads[2], "detection-list");
+      renderDetections(payloads[2], "event-detections");
+      renderSnapshots(payloads[3]);
+    } catch (err) {
+      setText("perception-status", "Perception UNKNOWN / OFFLINE");
+      setText("overview-perception", "UNKNOWN / OFFLINE");
+    }
+  }
+
+  function showView(name) {
+    if (!document.querySelectorAll) return;
+    document.querySelectorAll(".view").forEach(function (view) {
+      view.classList.toggle("active", view.id === "view-" + name);
+    });
+    document.querySelectorAll(".nav-button").forEach(function (button) {
+      button.classList.toggle("active", button.getAttribute("data-view") === name);
+    });
+  }
+
+  if (document.querySelectorAll) {
+    document.querySelectorAll(".nav-button").forEach(function (button) {
+      button.addEventListener("click", function () {
+        showView(button.getAttribute("data-view"));
+      });
+    });
+    document.querySelectorAll(".subtab").forEach(function (button) {
+      button.addEventListener("click", function () {
+        const tab = button.getAttribute("data-tab");
+        if (!tab) return;
+        const parent = button.parentElement;
+        parent.querySelectorAll(".subtab").forEach(function (item) {
+          item.classList.toggle("active", item === button);
+        });
+        ["cameras", "detections", "snapshots"].forEach(function (name) {
+          const panel = document.getElementById("tab-" + name);
+          if (panel) panel.classList.toggle("active", name === tab);
+        });
+      });
+    });
   }
 
   async function tick() {
@@ -724,6 +1034,7 @@
       let eventsPayload = { events: [] };
       if (evRes.ok) eventsPayload = await evRes.json();
       renderSnapshot(snap, eventsPayload);
+      refreshPerception();
       els.fetchError.classList.add("hidden");
       els.refreshBadge.textContent = "refresh " + Math.round(REFRESH_MS / 1000) + "s";
       els.refreshBadge.className = "pill GREEN";

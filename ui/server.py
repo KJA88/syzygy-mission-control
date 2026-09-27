@@ -182,7 +182,25 @@ def _read_json_body(handler, limit=16384):
     return payload, None
 
 
-def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None):
+def _vision_from_config(root: Path):
+    from perception.hub import VisionHub
+    from guardian.config import load_config
+    vision = {}
+    try:
+        loaded = load_config(root / "config" / "services.yaml")
+        if isinstance(loaded.get("vision"), dict):
+            vision = loaded["vision"]
+    except (OSError, ValueError, KeyError, TypeError):
+        vision = {}
+    return VisionHub(
+        vision.get("hub_base") or "",
+        vision.get("service_base") or "",
+        vision.get("hub_ui"),
+        vision.get("cameras") if isinstance(vision.get("cameras"), dict) else {},
+    )
+
+
+def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None):
     snapshot_path = state_dir / "snapshot.json"
     events_path = state_dir / "events.jsonl"
 
@@ -220,11 +238,19 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
 
         def do_POST(self):
             parsed = urlparse(self.path)
-            if owner is None:
-                return self._json(503, {"accepted": False, "result": "rejected", "reason": "CONTROL_OWNER_UNAVAILABLE"})
             payload, error = _read_json_body(self)
             if error:
                 return self._json(400, {"accepted": False, "result": "rejected", "reason": error})
+            if parsed.path == "/api/perception/track":
+                if vision is None:
+                    return self._json(200, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
+                return self._json(200, vision.track(payload.get("camera"), payload.get("enabled")))
+            if parsed.path == "/api/perception/ptz":
+                if vision is None:
+                    return self._json(200, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
+                return self._json(200, vision.ptz(payload.get("camera"), payload.get("dir")))
+            if owner is None:
+                return self._json(503, {"accepted": False, "result": "rejected", "reason": "CONTROL_OWNER_UNAVAILABLE"})
             if parsed.path == "/api/roarm/skills":
                 result = owner.request(
                     payload.get("skill"),
@@ -259,6 +285,49 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
 
         def _api(self, path: str, query: str):
             qs = parse_qs(query)
+            if path == "/api/perception/cameras":
+                if vision is None:
+                    return self._json(200, {"available": False, "reason": "VISION_HUB_UNAVAILABLE", "cameras": []})
+                return self._json(200, vision.camera_view())
+            if path == "/api/perception/events":
+                if vision is None:
+                    return self._json(200, {"available": False, "reason": "VISION_HUB_UNAVAILABLE", "events": []})
+                try:
+                    limit = int(qs.get("limit", ["50"])[0])
+                except (TypeError, ValueError):
+                    limit = 50
+                return self._json(200, vision.events(max(1, min(limit, 100))))
+            if path == "/api/perception/snapshots":
+                if vision is None:
+                    return self._json(200, {"available": False, "reason": "VISION_HUB_UNAVAILABLE", "snapshots": []})
+                camera = (qs.get("camera") or [None])[0]
+                return self._json(200, vision.snapshots(camera))
+            if path == "/api/devices":
+                cameras = []
+                if vision is not None:
+                    cameras = vision.camera_view().get("cameras") or []
+                roarm = None
+                snap = read_snapshot_file(snapshot_path, utcnow(), hard_stale)
+                if isinstance(snap.get("roarm"), dict):
+                    roarm = snap["roarm"]
+                from perception.hub import devices_from
+                return self._json(200, {"devices": devices_from(cameras, roarm)})
+            if path.startswith("/api/perception/snapshot/"):
+                if vision is None:
+                    return self._json(503, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
+                camera_id = path.rsplit("/", 1)[-1]
+                body, reason = vision.snapshot(camera_id)
+                if body is None:
+                    code = 404 if reason == "UNKNOWN_CAMERA" else 400 if reason == "CAPABILITY_UNAVAILABLE" else 503
+                    return self._json(code, {"accepted": False, "reason": reason})
+                return self._send(200, body, "image/jpeg")
+            if path == "/api/perception/media":
+                if vision is None:
+                    return self._json(503, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
+                body, reason = vision.media((qs.get("path") or [""])[0])
+                if body is None:
+                    return self._json(400, {"accepted": False, "reason": reason})
+                return self._send(200, body, "image/jpeg")
             if path == "/api/roarm/skills":
                 if owner is None:
                     return self._json(503, {"accepted": False, "reason": "CONTROL_OWNER_UNAVAILABLE"})
@@ -373,6 +442,7 @@ def main(argv=None):
             "do not publish via Cloudflare.\n" % (args.host,)
         )
     owner = build_owner(state_dir)
+    vision = _vision_from_config(Path(__file__).resolve().parent.parent)
     interval = 10.0
     try:
         from guardian.config import load_config
@@ -388,7 +458,7 @@ def main(argv=None):
             time.sleep(interval)
 
     threading.Thread(target=heartbeat_loop, name="control-owner-heartbeat", daemon=True).start()
-    handler = make_handler(state_dir, ui_dir, args.hard_stale_s, args.events_limit, owner)
+    handler = make_handler(state_dir, ui_dir, args.hard_stale_s, args.events_limit, owner, vision)
     httpd = ThreadingHTTPServer((args.host, args.port), handler)
     sys.stderr.write(
         "SYZYGY Mission Control V0.1 listening on http://%s:%d/\n"
