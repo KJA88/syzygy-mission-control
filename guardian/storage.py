@@ -84,6 +84,9 @@ def changes(previous, current):
                 for name, layer in obj.get('layers', {}).items():
                     result[group + '/' + obj['id'] + '/' + name] = layer
         result['system'] = snapshot.get('system', {})
+        roarm = snapshot.get('roarm')
+        if isinstance(roarm, dict) and roarm.get('status'):
+            result['roarm'] = roarm
         return result
     old = objects(previous)
     events = []
@@ -92,10 +95,13 @@ def changes(previous, current):
         if (before.get('status'), before.get('class')) == (obj.get('status'), obj.get('class')):
             continue
         recovered = before.get('status') in ('red', 'yellow', 'unknown') and obj.get('status') == 'green'
+        message = key + ' status changed'
+        if key == 'roarm' and obj.get('failure_reason'):
+            message = str(obj['failure_reason'])
         events.append(dict(schema_version=1, ts=current['generated_at'], trace_id=current['trace_id'],
                            host=obj.get('host'), component=key, event_type='status_change',
                            severity='info' if obj.get('status') == 'green' else 'warning',
                            operation='health_probe', operator='guardian', duration_ms=None,
                            result=obj.get('status'), **{'class': 'RECOVERED' if recovered else obj.get('class')},
-                           message=key + ' status changed', data={'before': before.get('status'), 'after': obj.get('status')}))
+                           message=message, data={'before': before.get('status'), 'after': obj.get('status')}))
     return events

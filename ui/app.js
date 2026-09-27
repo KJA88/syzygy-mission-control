@@ -315,23 +315,85 @@
     const observationAge = roarm.observation_age_s != null ? roarm.observation_age_s : computedAge;
     const freshness = snapshotStale ? "Stale" :
       roarm.fresh === true ? "Fresh" : roarm.fresh === false ? "Stale" : "Unknown";
-    const reason = snapshotStale ? "SNAPSHOT_STALE" : (roarm.class || "No fault");
+    const reason = snapshotStale
+      ? "SNAPSHOT_STALE"
+      : (roarm.failure_reason || roarm.class || "No fault");
     const value = function (item) {
       return item == null || item === "" ? "—" : item;
     };
     const pose = roarm.pose && typeof roarm.pose === "object" ? roarm.pose : {};
     const joints = roarm.joints && typeof roarm.joints === "object" ? roarm.joints : {};
+    const route = roarm.route && typeof roarm.route === "object" ? roarm.route : {};
     const row = function (label, item) {
       return "<div>" + esc(label) + ": <strong>" + esc(value(item)) + "</strong></div>";
     };
+    const statusUpdatedMs = Date.parse(roarm.transport_status_updated_at);
+    const statusAge = Number.isFinite(statusUpdatedMs)
+      ? (Date.now() - statusUpdatedMs) / 1000
+      : roarm.transport_status_age_s;
+    const recordFresh = roarm.transport_status_fresh === true;
+    const transportLabel = function (state) {
+      if (!recordFresh || state === "serial" || state === "usb") return "unavailable";
+      if (state === "udp") return "UDP trajectory active";
+      if (state === "http") return "HTTP";
+      if (state === "idle") return "idle";
+      return "unavailable";
+    };
+    const statusRecord = roarm.transport_status_updated_at
+      ? (recordFresh ? "fresh" : "stale") + " · age " + fmtAge(statusAge)
+      : "unavailable";
+    const routeLabel = function () {
+      if (route.status === "ok") return "wlan0 192.168.4.2 -> 192.168.4.1";
+      if (route.status === "wrong_interface") {
+        return "wrong interface " + value(route.device) + "; need wlan0";
+      }
+      if (route.status === "wrong_source") {
+        return "wrong source " + value(route.source) + "; need 192.168.4.2";
+      }
+      return "unavailable";
+    };
+    const eventLabel = function (item) {
+      if (!item || typeof item !== "object") return "unavailable";
+      const parts = [];
+      if (item.at) parts.push(fmtPT(item.at));
+      if (item.sequence != null) parts.push("seq " + item.sequence);
+      if (item.detail) parts.push(item.detail);
+      return parts.length ? parts.join(" · ") : "recorded";
+    };
+    const completionLabel = function (item) {
+      if (!item || typeof item !== "object") return "unavailable";
+      const parts = [];
+      if (item.pattern) parts.push(item.pattern);
+      if (item.at) parts.push(fmtPT(item.at));
+      if (item.stream_id != null) parts.push("stream " + item.stream_id);
+      if (item.sequence != null) parts.push("seq " + item.sequence);
+      return parts.length ? parts.join(" · ") : "recorded";
+    };
+    const streamLabel = roarm.stream_id == null
+      ? "unavailable"
+      : String(roarm.stream_id) + (
+        recordFresh && roarm.stream_role === "current" ? " (current)" : " (last)"
+      );
 
     els.roarm.innerHTML =
       '<article class="entity roarm-card"><div class="entity-head"><div class="entity-id">RoArm-M3</div>' +
       '<div class="status-chip ' + status + '">' + status + "</div></div>" +
       '<div class="entity-meta">' +
-      esc(reason + " · " + freshness + " · age " + fmtAge(observationAge)) +
+      esc(reason + " · T105 " + freshness.toLowerCase() + " · age " + fmtAge(observationAge)) +
       "</div><div class=\"roarm-summary\">" +
-      row("Transport", roarm.transport) +
+      row("Reachability", roarm.reachability || (roarm.connected === true ? "reachable" : "unreachable")) +
+      row("Route", routeLabel()) +
+      row("T105", freshness + " · age " + fmtAge(observationAge)) +
+      row("Transport state", transportLabel(roarm.transport_state)) +
+      row("Status record", statusRecord) +
+      row("UDP target", roarm.udp_target || "192.168.4.1:4210") +
+      row("Stream ID", streamLabel) +
+      row("Last sequence", roarm.last_sequence) +
+      row("Last completion", completionLabel(roarm.last_completion)) +
+      row("UDP late send", eventLabel(roarm.last_late)) +
+      row("UDP failed send", eventLabel(roarm.last_failed)) +
+      row("Watchdog release", eventLabel(roarm.last_watchdog)) +
+      row("Failure", reason) +
       row("Endpoint", roarm.endpoint) +
       row("Observed", fmtPT(roarm.observed_at)) +
       "</div><h3>XYZ</h3><div class=\"metrics\">" +
@@ -371,6 +433,13 @@
     SNAPSHOT_STALE: "Guardian’s information is out of date.",
     OBSERVATION_STALE: "The last observation is out of date.",
     EVIDENCE_STALE: "The last observation is out of date.",
+    ROARM_UNREACHABLE: "The RoArm did not answer the state check.",
+    ARM_ROUTE_WRONG_INTERFACE: "The RoArm route is not on wlan0.",
+    ARM_ROUTE_WRONG_SOURCE: "The RoArm route is not from the Pi address 192.168.4.2.",
+    ARM_ROUTE_UNAVAILABLE: "The route to the RoArm could not be read.",
+    ROARM_SERIAL_REJECTED: "USB/serial is not a RoArm runtime path.",
+    PATTERN_UDP_LATE: "The UDP trajectory sender fell behind and stopped.",
+    PATTERN_UDP_FAILED: "A UDP trajectory send failed.",
   };
 
   function accessReason(item, auth) {
