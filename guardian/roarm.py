@@ -19,7 +19,8 @@ ROUTE_DEVICE = 'wlan0'
 UDP_PORT = 4210
 UDP_TARGET = '192.168.4.1:4210'
 TRANSPORT_STATUS_FRESH_S = 90
-STATUS_PATH = Path('/tmp/roarm-pattern-command/transport-status.json')
+DEFAULT_RUNTIME_DIR = Path('/home/KA_PI/syzygy-runtime/roarm')
+STATUS_PATH = DEFAULT_RUNTIME_DIR / 'transport-status.json'
 _TRANSPORT_STATES = {'idle', 'http', 'udp'}
 _ACTIVE_FAILURES = {'PATTERN_UDP_LATE', 'PATTERN_UDP_FAILED'}
 
@@ -81,6 +82,23 @@ def interpret_route(text):
     else:
         route['status'] = 'ok'
     return route
+
+
+def runtime_dir_from_config(roarm_cfg):
+    """One configured runtime directory. Status, stop, and pid files live inside it."""
+    if isinstance(roarm_cfg, dict) and roarm_cfg.get('runtime_dir'):
+        return Path(roarm_cfg['runtime_dir'])
+    return DEFAULT_RUNTIME_DIR
+
+
+def transport_status_path(roarm_cfg=None):
+    return runtime_dir_from_config(roarm_cfg) / 'transport-status.json'
+
+
+def use_configured_status_path(roarm_cfg):
+    """Point the read-only status probe at the shared runtime directory."""
+    global STATUS_PATH
+    STATUS_PATH = transport_status_path(roarm_cfg)
 
 
 def read_transport_status(path=None):

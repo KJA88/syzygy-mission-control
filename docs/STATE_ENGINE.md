@@ -115,6 +115,14 @@ A stale Guardian heartbeat does not present `PREPARING` or `MOVING` as the
 current operational state. Those claims become unknown until a fresh Guardian
 cycle. Other fields that lack a value stay unknown.
 
+The control owner writes an adjacent lease, `state/control-owner.json`, about
+every 10 seconds and on each transition. Guardian only reads it. If that
+heartbeat is older than the lease (45 seconds) or missing, Guardian does not
+publish `PREPARING` or `MOVING` as current. The published state becomes
+unknown, `recorded_state` keeps the prior value, `motion_permitted` is false,
+and the system health rollup is unchanged. A new owner process still recovers
+`PREPARING` or `MOVING` to `STOPPED` with `RECOVERY_UNPROVEN_MOTION`.
+
 ## Planned adapters
 
 Adapters must be added one at a time with fixtures, freshness rules, and live

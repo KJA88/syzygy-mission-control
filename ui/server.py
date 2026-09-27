@@ -17,6 +17,8 @@ import json
 import mimetypes
 import os
 import sys
+import threading
+import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -323,6 +325,7 @@ def build_owner(state_dir: Path):
     from control.owner import SkillOwner
     from control.production import ProductionCommandPort, readiness_from_snapshot
     from guardian.config import load_config
+    from guardian.roarm import runtime_dir_from_config
     roarm = {}
     try:
         loaded = load_config(root / "config" / "services.yaml")
@@ -335,7 +338,7 @@ def build_owner(state_dir: Path):
     snapshot = Path(state_dir) / "snapshot.json"
     return SkillOwner(
         Path(state_dir) / "operational-state.json",
-        ProductionCommandPort(command_root),
+        ProductionCommandPort(command_root, runtime_dir_from_config(roarm)),
         lambda: readiness_from_snapshot(snapshot),
         utcnow,
         workspace,
@@ -370,6 +373,21 @@ def main(argv=None):
             "do not publish via Cloudflare.\n" % (args.host,)
         )
     owner = build_owner(state_dir)
+    interval = 10.0
+    try:
+        from guardian.config import load_config
+        loaded = load_config(Path(__file__).resolve().parent.parent / "config" / "services.yaml")
+        owner_cfg = loaded.get("control_owner") if isinstance(loaded.get("control_owner"), dict) else {}
+        interval = float(owner_cfg.get("heartbeat_s", interval))
+    except (OSError, ValueError, KeyError, TypeError):
+        interval = 10.0
+
+    def heartbeat_loop():
+        while True:
+            owner.beat()
+            time.sleep(interval)
+
+    threading.Thread(target=heartbeat_loop, name="control-owner-heartbeat", daemon=True).start()
     handler = make_handler(state_dir, ui_dir, args.hard_stale_s, args.events_limit, owner)
     httpd = ThreadingHTTPServer((args.host, args.port), handler)
     sys.stderr.write(

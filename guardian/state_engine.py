@@ -454,6 +454,53 @@ def unavailable_operational():
     }
 
 
+OWNER_LEASE_S = 45
+
+
+def load_owner_heartbeat(path):
+    """Read the control-owner lease. Guardian must not write this file."""
+    import json
+    from pathlib import Path
+    file = Path(path)
+    if not file.is_file():
+        return None
+    try:
+        raw = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict) or raw.get("role") != "control-owner":
+        return None
+    if not isinstance(raw.get("heartbeat_at"), str) or not raw.get("heartbeat_at").strip():
+        return None
+    return raw
+
+
+def apply_owner_lease(record, heartbeat, now, lease_s=OWNER_LEASE_S):
+    """Hide unproven motion when the control owner is not currently alive."""
+    from copy import deepcopy
+    from .model import age
+    published = deepcopy(record) if isinstance(record, dict) else unavailable_operational()
+    beat = heartbeat.get("heartbeat_at") if isinstance(heartbeat, dict) else None
+    elapsed = age(beat, now)
+    fresh = elapsed is not None and 0 <= elapsed <= lease_s
+    published["owner_heartbeat_at"] = beat
+    if fresh:
+        published["freshness"] = "fresh"
+        return published
+    mark_operational_unproven({"operational": published})
+    return published
+
+
+def publish_operational_state(operational_path, heartbeat_path, now, lease_s=OWNER_LEASE_S):
+    """Read operational state and apply the owner lease. Does not write either file."""
+    return apply_owner_lease(
+        load_published_operational(operational_path),
+        load_owner_heartbeat(heartbeat_path),
+        now,
+        lease_s,
+    )
+
+
 def load_published_operational(path):
     """Read the control owner's record. Guardian must not write this file."""
     import json

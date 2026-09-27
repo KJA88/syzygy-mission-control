@@ -10,7 +10,11 @@ import tempfile
 
 from control.owner import SkillOwner
 from control.production import ProductionCommandPort, readiness_from_snapshot
-from guardian.state_engine import load_published_operational
+from guardian.config import load_config
+from guardian.model import stamp
+from guardian.roarm import runtime_dir_from_config, transport_status_path, use_configured_status_path
+from guardian.state_engine import load_owner_heartbeat, load_published_operational, publish_operational_state
+import guardian.roarm as roarm_module
 
 ROOT = Path(__file__).resolve().parents[1]
 NOW = 1800000000
@@ -280,7 +284,7 @@ class SkillOwnerTests(unittest.TestCase):
             self.assertEqual(published["last_completed_action"], "return_home")
         source = (ROOT / "guardian" / "aggregator.py").read_text(encoding="utf-8")
         self.assertNotIn("operational.recover", source)
-        self.assertIn("load_published_operational", source)
+        self.assertIn("publish_operational_state", source)
 
     def test_mission_control_renders_the_control_panel(self):
         html = (ROOT / "ui" / "index.html").read_text(encoding="utf-8")
@@ -300,7 +304,7 @@ class SkillOwnerTests(unittest.TestCase):
 
     def test_production_port_requires_the_command_checkout(self):
         with tempfile.TemporaryDirectory() as directory:
-            port = ProductionCommandPort(directory)
+            port = ProductionCommandPort(directory, "/home/KA_PI/syzygy-runtime/roarm")
             self.assertFalse(port.available())
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "snapshot.json"
@@ -309,6 +313,123 @@ class SkillOwnerTests(unittest.TestCase):
                 "roarm": {"reachability": "reachable", "connected": True, "fresh": True, "t105_fresh": True}
             }), encoding="utf-8")
             self.assertEqual(readiness_from_snapshot(path)["fresh"], True)
+
+
+SHARED_RUNTIME = "/home/KA_PI/syzygy-runtime/roarm"
+
+
+def moving_record(directory):
+    gate = owner(directory)
+    gate.store.transition(
+        "PREPARING", now=NOW, trace_id="live", reason="SKILL_ACCEPTED",
+        skill="move_to_pose", motion_authority="manual",
+    )
+    gate.store.transition(
+        "MOVING", now=NOW, trace_id="live", reason="SKILL_STARTED",
+        motion_authority="manual",
+    )
+    return gate
+
+
+class OwnerLeaseTests(unittest.TestCase):
+    def test_fresh_owner_heartbeat_publishes_moving(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gate = moving_record(directory)
+            published = publish_operational_state(
+                gate.store.path,
+                gate.heartbeat_path,
+                NOW,
+                45,
+            )
+            self.assertEqual(published["state"], "MOVING")
+            self.assertTrue(published["motion_permitted"])
+            self.assertEqual(published["freshness"], "fresh")
+            self.assertEqual(published["owner_heartbeat_at"], stamp(NOW))
+            self.assertEqual(json.loads(gate.store.path.read_text(encoding="utf-8"))["state"], "MOVING")
+
+    def test_stale_or_dead_owner_hides_moving_without_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gate = moving_record(directory)
+            operational = gate.store.path
+            heartbeat = gate.heartbeat_path
+            heartbeat.write_text(json.dumps({
+                "schema_version": 1,
+                "role": "control-owner",
+                "heartbeat_at": stamp(NOW - 120),
+                "pid": 1,
+            }), encoding="utf-8")
+            before = operational.read_text(encoding="utf-8")
+            published = publish_operational_state(operational, heartbeat, NOW, 45)
+            self.assertIsNone(published["state"])
+            self.assertEqual(published["recorded_state"], "MOVING")
+            self.assertFalse(published["motion_permitted"])
+            self.assertEqual(published["display_reason"], "UNPROVEN_ACTIVE_STATE")
+            self.assertEqual(published["freshness"], "stale")
+            self.assertEqual(operational.read_text(encoding="utf-8"), before)
+            heartbeat.unlink()
+            self.assertIsNone(load_owner_heartbeat(heartbeat))
+            self.assertFalse(heartbeat.exists())
+            dead = publish_operational_state(operational, heartbeat, NOW, 45)
+            self.assertIsNone(dead["state"])
+            self.assertEqual(dead["recorded_state"], "MOVING")
+            self.assertFalse(dead["motion_permitted"])
+            snapshot = {
+                "schema_version": 1,
+                "system": {"status": "green", "reason": None},
+                "state_engine": {},
+            }
+            from guardian.state_engine import attach_operational_state
+            attach_operational_state(snapshot, dead)
+            self.assertEqual(snapshot["system"]["status"], "green")
+            self.assertIsNone(snapshot["system"]["reason"])
+
+    def test_shared_runtime_dir_is_outside_tmp_for_control_and_guardian(self):
+        cfg = load_config(ROOT / "config" / "services.yaml")
+        runtime = runtime_dir_from_config(cfg["roarm"])
+        status = transport_status_path(cfg["roarm"])
+        self.assertEqual(runtime, Path(SHARED_RUNTIME))
+        self.assertEqual(status, runtime / "transport-status.json")
+        self.assertEqual(Path(cfg["roarm"]["transport_status_path"]), status)
+        self.assertFalse(str(runtime).startswith("/tmp"))
+        use_configured_status_path(cfg["roarm"])
+        self.assertEqual(roarm_module.STATUS_PATH, status)
+        self.assertNotIn("/tmp/roarm-pattern-command", (ROOT / "config" / "services.yaml").read_text(encoding="utf-8"))
+        self.assertNotIn("/tmp/roarm-pattern-command", (ROOT / "guardian" / "roarm.py").read_text(encoding="utf-8"))
+
+    def test_production_port_passes_the_shared_runtime_dir(self):
+        source = (
+            "CALLS = []\n"
+            "def move_pose(pose, **options):\n"
+            "    CALLS.append(('move_pose', options.get('runtime_dir')))\n"
+            "    return {'ok': True, 'reason': 'PATTERN_FINISHED'}\n"
+            "def run_named(name, **options):\n"
+            "    CALLS.append((name, options.get('runtime_dir')))\n"
+            "    return {'ok': True, 'reason': 'PATTERN_FINISHED'}\n"
+            "def stop_motion(**options):\n"
+            "    CALLS.append(('stop', options.get('runtime_dir')))\n"
+            "    return {'ok': False, 'stopped': True, 'reason': 'PATTERN_STOP_REQUESTED'}\n"
+            "def engineering(packet, **options):\n"
+            "    CALLS.append(('engineering', options.get('runtime_dir')))\n"
+            "    return {'ok': True, 'reason': 'PATTERN_FINISHED'}\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "runtime" / "core" / "safety"
+            package.mkdir(parents=True)
+            for parent in (root / "runtime", root / "runtime" / "core", package):
+                (parent / "__init__.py").write_text("", encoding="utf-8")
+            (package / "skill_adapter.py").write_text(source, encoding="utf-8")
+            port = ProductionCommandPort(root, SHARED_RUNTIME)
+            try:
+                port.execute("return_home", {})
+                port.stop()
+                import runtime.core.safety.skill_adapter as adapter
+                self.assertEqual(adapter.CALLS, [("home", SHARED_RUNTIME), ("stop", SHARED_RUNTIME)])
+            finally:
+                for name in list(__import__("sys").modules):
+                    if name == "runtime" or name.startswith("runtime."):
+                        del __import__("sys").modules[name]
+        self.assertNotIn("/tmp", SHARED_RUNTIME)
 
 
 def load_server():

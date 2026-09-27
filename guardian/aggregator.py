@@ -10,9 +10,9 @@ from .auth import auth_mcp
 from .config import load_config, configured_url
 from .model import age, fact, fresh, reduce_object, reduce_system, stamp, utcnow
 from .probes import http_json, mcp
-from .roarm import probe_roarm, unknown_roarm
+from .roarm import probe_roarm, unknown_roarm, use_configured_status_path
 from .storage import atomic_json, append_events, changes
-from .state_engine import attach_operational_state, build_state, load_published_operational
+from .state_engine import OWNER_LEASE_S, attach_operational_state, build_state, publish_operational_state
 
 
 def missing(required, now, trace, cls='EVIDENCE_MISSING'):
@@ -144,6 +144,7 @@ def build_snapshot(cfg, evidence, public, now, trace, crashed=False,
 class Guardian:
     def __init__(self, cfg, use_candidates=False):
         self.cfg, self.use_candidates, self.public_cache = cfg, use_candidates, {}
+        use_configured_status_path(self.cfg.get('roarm'))
 
     def tick(self):
         trace, now = str(uuid4()), utcnow()
@@ -211,6 +212,12 @@ def main():
     guardian = Guardian(cfg, args.use_candidate_agents)
     directory = Path(args.state_dir)
     operational_path = directory / 'operational-state.json'
+    heartbeat_path = directory / 'control-owner.json'
+    owner_cfg = cfg.get('control_owner') if isinstance(cfg.get('control_owner'), dict) else {}
+    try:
+        lease_s = float(owner_cfg.get('lease_s', OWNER_LEASE_S))
+    except (TypeError, ValueError):
+        lease_s = OWNER_LEASE_S
     try:
         previous = json.loads((directory / 'snapshot.json').read_text(encoding='utf-8'))
     except (OSError, ValueError):
@@ -220,7 +227,10 @@ def main():
             snapshot = guardian.tick()
         except Exception:
             snapshot = build_snapshot(cfg, {}, {}, utcnow(), str(uuid4()), crashed=True)
-        attach_operational_state(snapshot, load_published_operational(operational_path))
+        attach_operational_state(
+            snapshot,
+            publish_operational_state(operational_path, heartbeat_path, utcnow(), lease_s),
+        )
         events = changes(previous, snapshot)
         snapshot['activity'] = events[-100:]
         append_events(directory / 'events.jsonl', events)

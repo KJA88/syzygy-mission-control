@@ -7,6 +7,10 @@ guardian:
   heartbeat_unknown_s: 120
   observation_unknown_s: 90
 
+control_owner:
+  heartbeat_s: 10
+  lease_s: 45
+
 roarm:
   id: roarm
   display_name: RoArm-M3
@@ -20,7 +24,9 @@ roarm:
   route_device: wlan0
   route_source: 192.168.4.2
   route_destination: 192.168.4.1
-  transport_status_path: /tmp/roarm-pattern-command/transport-status.json
+  # Shared by Mission Control and Guardian. Outside /tmp because both units use PrivateTmp.
+  runtime_dir: /home/KA_PI/syzygy-runtime/roarm
+  transport_status_path: /home/KA_PI/syzygy-runtime/roarm/transport-status.json
   command_root: /home/KA_PI/roarm-m3-pattern-cmd
   # Hobby envelope for rejecting obviously impossible pose requests.
   # This is not a Cartesian accuracy claim.

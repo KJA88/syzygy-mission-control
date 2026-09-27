@@ -37,8 +37,12 @@ def _normalize(outcome):
 class ProductionCommandPort:
     """Imports runtime.core.safety.skill_adapter from the production command checkout."""
 
-    def __init__(self, command_root):
+    def __init__(self, command_root, runtime_dir):
         self.command_root = str(command_root)
+        self.runtime_dir = str(runtime_dir)
+
+    def _call_options(self):
+        return {"runtime_dir": self.runtime_dir}
 
     def available(self):
         root = Path(self.command_root)
@@ -53,18 +57,19 @@ class ProductionCommandPort:
 
     def execute(self, skill, params):
         adapter = self._adapter()
+        options = self._call_options()
         if skill == "move_to_pose":
-            return _normalize(adapter.move_pose(params))
+            return _normalize(adapter.move_pose(params, **options))
         if skill == "return_home":
-            return _normalize(adapter.run_named("home"))
+            return _normalize(adapter.run_named("home", **options))
         if skill == "run_pattern":
-            return _normalize(adapter.run_named(params["pattern"]))
+            return _normalize(adapter.run_named(params["pattern"], **options))
         if skill == "stop":
-            return _normalize(adapter.stop_motion())
+            return _normalize(adapter.stop_motion(**options))
         return {"ok": False, "reason": "UNKNOWN_SKILL"}
 
     def stop(self):
-        return _normalize(self._adapter().stop_motion())
+        return _normalize(self._adapter().stop_motion(**self._call_options()))
 
     def engineering(self, packet):
-        return _normalize(self._adapter().engineering(packet))
+        return _normalize(self._adapter().engineering(packet, **self._call_options()))

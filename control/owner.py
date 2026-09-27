@@ -6,10 +6,14 @@ command port. There is no approval queue.
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
+from guardian.model import stamp
 from guardian.state_engine import OperationalStateStore
+from guardian.storage import atomic_json
 
 SKILLS = ("move_to_pose", "return_home", "run_pattern", "stop", "clear")
 PATTERNS = ("lissajous", "circle", "spiral")
@@ -43,7 +47,7 @@ def _text(value):
 
 
 class SkillOwner:
-    def __init__(self, path, port, readiness, now, workspace=None):
+    def __init__(self, path, port, readiness, now, workspace=None, heartbeat_path=None):
         self.port = port
         self.readiness = readiness
         self.now = now
@@ -51,6 +55,7 @@ class SkillOwner:
         if isinstance(workspace, dict):
             self.workspace.update(workspace)
         self.store = OperationalStateStore(path)
+        self.heartbeat_path = Path(heartbeat_path) if heartbeat_path else Path(path).with_name("control-owner.json")
         self._lock = Lock()
         self._inflight = False
         self._stop_requested = False
@@ -62,7 +67,17 @@ class SkillOwner:
         self._inflight = False
         self._stop_requested = False
         self.states = [view.get("state")]
+        self.beat()
         return view
+
+    def beat(self):
+        """Prove this process is the live control owner. Does not change operational state."""
+        atomic_json(self.heartbeat_path, {
+            "schema_version": 1,
+            "role": "control-owner",
+            "heartbeat_at": stamp(self.now()),
+            "pid": os.getpid(),
+        })
 
     def view(self):
         return self.store.view()
@@ -253,6 +268,7 @@ class SkillOwner:
         if not accepted:
             raise RuntimeError(view.get("last_rejection"))
         self.states.append(view.get("state"))
+        self.beat()
         return view
 
     def _result(self, accepted, result, reason, trace_id):
