@@ -79,6 +79,14 @@ def mark_state_engine_stale(snapshot: dict) -> None:
                 confidence=None,
                 reason="SNAPSHOT_STALE",
             )
+    operational = state.get("operational")
+    if isinstance(operational, dict):
+        operational["freshness"] = "stale"
+        if operational.get("state") in ("PREPARING", "MOVING"):
+            operational["recorded_state"] = operational.get("state")
+            operational["state"] = None
+            operational["motion_permitted"] = False
+            operational["display_reason"] = "UNPROVEN_ACTIVE_STATE"
 
 
 def apply_heartbeat_freshness(snapshot: dict, now: float, hard_stale: float = DEFAULT_HARD_STALE_S) -> dict:

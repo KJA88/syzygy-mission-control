@@ -216,3 +216,261 @@ def build_state(snapshot):
         "read_only": True,
         "entities": entities,
     }
+
+
+# Authoritative operational state. Distinct from Guardian observations above.
+# Phase 2 records commanded state only. It does not enforce arm motion.
+
+OPERATIONAL_STATES = ("IDLE", "PREPARING", "MOVING", "COMPLETE", "FAULT", "STOPPED")
+ACTIVE_MOTION_STATES = frozenset({"PREPARING", "MOVING"})
+KNOWN_GOOD_STATES = frozenset({"IDLE", "COMPLETE"})
+LEGAL_TRANSITIONS = {
+    "IDLE": frozenset({"PREPARING", "FAULT", "STOPPED"}),
+    "PREPARING": frozenset({"IDLE", "MOVING", "COMPLETE", "FAULT", "STOPPED"}),
+    "MOVING": frozenset({"COMPLETE", "FAULT", "STOPPED"}),
+    "COMPLETE": frozenset({"IDLE", "PREPARING", "FAULT", "STOPPED"}),
+    "FAULT": frozenset({"IDLE", "STOPPED"}),
+    "STOPPED": frozenset({"IDLE", "FAULT"}),
+}
+_UNSET = object()
+
+
+def _text(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _new_operational_state(now, trace_id, reason):
+    from .model import stamp
+    return {
+        "schema_version": 1,
+        "role": "authoritative",
+        "state": "IDLE",
+        "previous_state": None,
+        "transition_at": stamp(now),
+        "transition_reason": reason,
+        "operator": None,
+        "skill": None,
+        "mission": None,
+        "motion_permitted": False,
+        "motion_authority": None,
+        "fault_class": None,
+        "fault_reason": None,
+        "last_known_good": "IDLE",
+        "last_completed_action": None,
+        "trace_id": trace_id,
+        "freshness": "fresh",
+        "last_rejection": None,
+    }
+
+
+def _valid_operational_record(raw):
+    if not isinstance(raw, dict) or raw.get("schema_version") != 1:
+        return False
+    if raw.get("role") != "authoritative":
+        return False
+    if raw.get("state") not in OPERATIONAL_STATES:
+        return False
+    if not isinstance(raw.get("transition_reason"), str) or not raw.get("trace_id"):
+        return False
+    good = raw.get("last_known_good")
+    return good in KNOWN_GOOD_STATES
+
+
+def recover_operational_state(raw, now, trace_id):
+    """Return a safe authoritative record. Do not claim unproven motion."""
+    if raw is None:
+        return _new_operational_state(now, trace_id, "INITIAL")
+    if not _valid_operational_record(raw):
+        return _new_operational_state(now, trace_id, "RECOVERY_INVALID")
+    if raw["state"] in ACTIVE_MOTION_STATES:
+        recovered = _new_operational_state(now, trace_id, "RECOVERY_UNPROVEN_MOTION")
+        recovered["state"] = "STOPPED"
+        recovered["previous_state"] = raw["state"]
+        recovered["operator"] = _text(raw.get("operator"))
+        recovered["last_known_good"] = raw["last_known_good"]
+        recovered["last_completed_action"] = _text(raw.get("last_completed_action"))
+        recovered["fault_class"] = _text(raw.get("fault_class"))
+        recovered["fault_reason"] = _text(raw.get("fault_reason"))
+        return recovered
+    kept = _new_operational_state(now, trace_id, raw["transition_reason"])
+    kept.update(
+        state=raw["state"],
+        previous_state=raw.get("previous_state") if raw.get("previous_state") in OPERATIONAL_STATES else None,
+        transition_at=raw.get("transition_at") or kept["transition_at"],
+        operator=_text(raw.get("operator")),
+        mission=_text(raw.get("mission")) if raw["state"] == "COMPLETE" else None,
+        fault_class=_text(raw.get("fault_class")) if raw["state"] in ("FAULT", "STOPPED") else None,
+        fault_reason=_text(raw.get("fault_reason")) if raw["state"] in ("FAULT", "STOPPED") else None,
+        last_known_good=raw["last_known_good"],
+        last_completed_action=_text(raw.get("last_completed_action")),
+        trace_id=str(raw["trace_id"]),
+        last_rejection=raw.get("last_rejection") if isinstance(raw.get("last_rejection"), dict) else None,
+    )
+    if raw["state"] == "COMPLETE":
+        kept["last_known_good"] = "COMPLETE"
+    elif raw["state"] == "IDLE":
+        kept["last_known_good"] = "IDLE"
+    kept["skill"] = None
+    kept["motion_authority"] = None
+    kept["motion_permitted"] = False
+    kept["freshness"] = "fresh"
+    return kept
+
+
+def _reject(record, target, reason, now, trace_id):
+    from .model import stamp
+    from copy import deepcopy
+    rejected = deepcopy(record)
+    rejected["last_rejection"] = {
+        "at": stamp(now),
+        "from_state": record.get("state"),
+        "to_state": target,
+        "reason": reason,
+        "trace_id": trace_id,
+    }
+    return rejected
+
+
+def apply_transition(record, target, *, now, trace_id, reason,
+                     operator=_UNSET, skill=_UNSET, mission=_UNSET,
+                     motion_authority=_UNSET, fault_class=_UNSET, fault_reason=_UNSET):
+    """Accept one legal transition or record a rejection without changing state."""
+    from .model import stamp
+    from copy import deepcopy
+    current = record.get("state")
+    requested = str(target)
+    if requested not in LEGAL_TRANSITIONS.get(current, frozenset()):
+        return _reject(record, requested, "ILLEGAL_TRANSITION", now, trace_id), False
+    if not _text(reason):
+        return _reject(record, requested, "TRANSITION_REASON_REQUIRED", now, trace_id), False
+    if requested == "FAULT" and not _text(fault_class if fault_class is not _UNSET else None):
+        return _reject(record, requested, "FAULT_DETAIL_REQUIRED", now, trace_id), False
+    prospective_authority = (
+        record.get("motion_authority") if motion_authority is _UNSET else _text(motion_authority))
+    if requested == "MOVING" and not prospective_authority:
+        return _reject(record, requested, "AUTHORITY_REQUIRED", now, trace_id), False
+
+    nxt = deepcopy(record)
+    nxt["previous_state"] = current
+    nxt["state"] = requested
+    nxt["transition_at"] = stamp(now)
+    nxt["transition_reason"] = _text(reason)
+    nxt["trace_id"] = str(trace_id)
+    nxt["freshness"] = "fresh"
+    nxt.pop("recorded_state", None)
+    nxt.pop("display_reason", None)
+
+    def assign(field, supplied):
+        if supplied is not _UNSET:
+            nxt[field] = _text(supplied)
+
+    assign("operator", operator)
+    assign("skill", skill)
+    assign("mission", mission)
+    assign("motion_authority", motion_authority)
+    assign("fault_class", fault_class)
+    assign("fault_reason", fault_reason)
+
+    if requested == "MOVING":
+        nxt["motion_permitted"] = True
+        nxt["fault_class"] = None
+        nxt["fault_reason"] = None
+    elif requested == "PREPARING":
+        nxt["motion_permitted"] = bool(nxt.get("motion_authority"))
+        nxt["fault_class"] = None
+        nxt["fault_reason"] = None
+    elif requested == "COMPLETE":
+        nxt["last_completed_action"] = nxt.get("skill")
+        nxt["skill"] = None
+        nxt["motion_authority"] = None
+        nxt["motion_permitted"] = False
+        nxt["fault_class"] = None
+        nxt["fault_reason"] = None
+        nxt["last_known_good"] = "COMPLETE"
+    elif requested == "IDLE":
+        nxt["skill"] = None
+        nxt["mission"] = None
+        nxt["motion_authority"] = None
+        nxt["motion_permitted"] = False
+        nxt["fault_class"] = None
+        nxt["fault_reason"] = None
+        nxt["last_known_good"] = "IDLE"
+    elif requested == "FAULT":
+        nxt["motion_permitted"] = False
+        nxt["motion_authority"] = None
+        nxt["skill"] = None
+    elif requested == "STOPPED":
+        nxt["motion_permitted"] = False
+        nxt["motion_authority"] = None
+        nxt["skill"] = None
+        if current != "FAULT":
+            nxt["fault_class"] = None
+            nxt["fault_reason"] = None
+    return nxt, True
+
+
+def mark_operational_unproven(state_engine):
+    """A stale snapshot must not present PREPARING or MOVING as current."""
+    if not isinstance(state_engine, dict):
+        return
+    operational = state_engine.get("operational")
+    if not isinstance(operational, dict):
+        return
+    operational["freshness"] = "stale"
+    if operational.get("state") in ACTIVE_MOTION_STATES:
+        operational["recorded_state"] = operational.get("state")
+        operational["state"] = None
+        operational["motion_permitted"] = False
+        operational["display_reason"] = "UNPROVEN_ACTIVE_STATE"
+
+
+def attach_operational_state(snapshot, record):
+    """Copy authoritative state onto the snapshot. Evidence entities stay unchanged."""
+    from copy import deepcopy
+    engine = snapshot.get("state_engine")
+    if not isinstance(engine, dict):
+        engine = {}
+        snapshot["state_engine"] = engine
+    engine["operational"] = deepcopy(record)
+    return snapshot
+
+
+class OperationalStateStore:
+    """Single writer for the authoritative operational record."""
+
+    def __init__(self, path):
+        from pathlib import Path
+        self.path = Path(path)
+        self.record = None
+
+    def recover(self, now, trace_id):
+        import json
+        raw = None
+        if self.path.is_file():
+            try:
+                raw = json.loads(self.path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raw = {"schema_version": 0}
+        self.record = recover_operational_state(raw, now, trace_id)
+        self.save()
+        return self.view()
+
+    def transition(self, target, **kwargs):
+        if self.record is None:
+            raise RuntimeError("operational state has not been recovered")
+        self.record, accepted = apply_transition(self.record, target, **kwargs)
+        self.save()
+        return self.view(), accepted
+
+    def save(self):
+        from .storage import atomic_json
+        if self.record is None:
+            raise RuntimeError("operational state has not been recovered")
+        atomic_json(self.path, self.record)
+
+    def view(self):
+        from copy import deepcopy
+        return deepcopy(self.record)
