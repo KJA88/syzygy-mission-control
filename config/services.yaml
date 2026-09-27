@@ -21,6 +21,16 @@ roarm:
   route_source: 192.168.4.2
   route_destination: 192.168.4.1
   transport_status_path: /tmp/roarm-pattern-command/transport-status.json
+  command_root: /home/KA_PI/roarm-m3-pattern-cmd
+  # Hobby envelope for rejecting obviously impossible pose requests.
+  # This is not a Cartesian accuracy claim.
+  workspace_mm:
+    x_min: -500
+    x_max: 500
+    y_min: -500
+    y_max: 500
+    z_min: 0
+    z_max: 700
 
 # Live inventory captured 2026-09-23.
 # Catalog fingerprint = SHA-256 of sorted tool names joined with "\n" (UTF-8).

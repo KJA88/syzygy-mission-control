@@ -12,7 +12,7 @@ from .model import age, fact, fresh, reduce_object, reduce_system, stamp, utcnow
 from .probes import http_json, mcp
 from .roarm import probe_roarm, unknown_roarm
 from .storage import atomic_json, append_events, changes
-from .state_engine import OperationalStateStore, attach_operational_state, build_state
+from .state_engine import attach_operational_state, build_state, load_published_operational
 
 
 def missing(required, now, trace, cls='EVIDENCE_MISSING'):
@@ -210,8 +210,7 @@ def main():
     cfg = load_config(args.config)
     guardian = Guardian(cfg, args.use_candidate_agents)
     directory = Path(args.state_dir)
-    operational = OperationalStateStore(directory / 'operational-state.json')
-    operational.recover(utcnow(), str(uuid4()))
+    operational_path = directory / 'operational-state.json'
     try:
         previous = json.loads((directory / 'snapshot.json').read_text(encoding='utf-8'))
     except (OSError, ValueError):
@@ -221,7 +220,7 @@ def main():
             snapshot = guardian.tick()
         except Exception:
             snapshot = build_snapshot(cfg, {}, {}, utcnow(), str(uuid4()), crashed=True)
-        attach_operational_state(snapshot, operational.view())
+        attach_operational_state(snapshot, load_published_operational(operational_path))
         events = changes(previous, snapshot)
         snapshot['activity'] = events[-100:]
         append_events(directory / 'events.jsonl', events)

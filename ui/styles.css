@@ -266,6 +266,41 @@ td.mono, .mono { font-family: var(--mono); }
   .card-head, .topbar { flex-wrap: wrap; }
 }
 
+.control-grid, .control-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: end;
+  margin: 0.6rem 0;
+}
+.control-grid label, .control-actions label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.control-grid input, .control-actions select, .control-actions button, #ctrl-json, #ctrl-json-send {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+}
+#ctrl-stop { border-color: var(--red); color: var(--red); }
+.control-label { margin: 0.8rem 0 0.2rem; font-size: 1rem; }
+#ctrl-json { width: 100%; font-family: var(--mono); }
+.control-result {
+  margin: 0.6rem 0 0;
+  padding: 0.6rem;
+  background: var(--bg-2);
+  border-radius: 6px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+}
+
 @media (max-width: 900px) {
   .guardian-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .strip-item.wide { grid-column: span 2; }

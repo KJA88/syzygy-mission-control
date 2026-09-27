@@ -429,6 +429,51 @@ def mark_operational_unproven(state_engine):
         operational["display_reason"] = "UNPROVEN_ACTIVE_STATE"
 
 
+def unavailable_operational():
+    """Published when the control owner has not written a record. This does not create one."""
+    return {
+        "schema_version": 1,
+        "role": "authoritative",
+        "state": None,
+        "freshness": "unknown",
+        "motion_permitted": False,
+        "operator": None,
+        "skill": None,
+        "mission": None,
+        "motion_authority": None,
+        "fault_class": None,
+        "fault_reason": None,
+        "last_completed_action": None,
+        "transition_reason": None,
+        "previous_state": None,
+        "transition_at": None,
+        "trace_id": None,
+        "last_known_good": None,
+        "last_rejection": None,
+        "display_reason": "OPERATIONAL_STATE_UNAVAILABLE",
+    }
+
+
+def load_published_operational(path):
+    """Read the control owner's record. Guardian must not write this file."""
+    import json
+    from pathlib import Path
+    file = Path(path)
+    if not file.is_file():
+        return unavailable_operational()
+    try:
+        raw = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return unavailable_operational()
+    if not isinstance(raw, dict) or not _valid_operational_record(raw):
+        return unavailable_operational()
+    if raw.get("state") == "FAULT" and not _text(raw.get("fault_class")):
+        return unavailable_operational()
+    record = dict(raw)
+    record["freshness"] = "fresh"
+    return record
+
+
 def attach_operational_state(snapshot, record):
     """Copy authoritative state onto the snapshot. Evidence entities stay unchanged."""
     from copy import deepcopy

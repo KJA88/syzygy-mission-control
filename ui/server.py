@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""SYZYGY Mission Control V0.1 — LAN-only read-only UI server.
+"""SYZYGY Mission Control — LAN-only UI and RoArm skill API.
 
 Serves static UI assets and Guardian outputs (snapshot.json + events.jsonl).
-Does NOT probe MCP, hosts, Cloudflare, or any remote service.
+Named skill requests and the engineering JSON path are served on this same
+LAN server. Does NOT probe MCP, hosts, Cloudflare, or any remote service.
 Must remain LAN-only — never publish through Cloudflare.
 
 Mirrors guardian.storage.read_snapshot heartbeat freshness:
@@ -162,7 +163,24 @@ def tail_jsonl(path: Path, limit: int = DEFAULT_EVENTS_LIMIT) -> list:
     return events
 
 
-def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int):
+def _read_json_body(handler, limit=16384):
+    try:
+        length = int(handler.headers.get("Content-Length", "0"))
+    except ValueError:
+        return None, "MALFORMED_JSON"
+    if length < 0 or length > limit:
+        return None, "MALFORMED_JSON"
+    try:
+        raw = handler.rfile.read(length)
+        payload = json.loads(raw.decode("utf-8") or "{}")
+    except (UnicodeError, ValueError, OSError):
+        return None, "MALFORMED_JSON"
+    if not isinstance(payload, dict):
+        return None, "MALFORMED_JSON"
+    return payload, None
+
+
+def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None):
     snapshot_path = state_dir / "snapshot.json"
     events_path = state_dir / "events.jsonl"
 
@@ -198,6 +216,34 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 return self._send(404, b"not found\n", "text/plain; charset=utf-8")
             return self._static(rel)
 
+        def do_POST(self):
+            parsed = urlparse(self.path)
+            if owner is None:
+                return self._json(503, {"accepted": False, "result": "rejected", "reason": "CONTROL_OWNER_UNAVAILABLE"})
+            payload, error = _read_json_body(self)
+            if error:
+                return self._json(400, {"accepted": False, "result": "rejected", "reason": error})
+            if parsed.path == "/api/roarm/skills":
+                result = owner.request(
+                    payload.get("skill"),
+                    authority=payload.get("authority"),
+                    operator=payload.get("operator"),
+                    mission=payload.get("mission"),
+                    trace_id=payload.get("trace_id"),
+                    params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
+                )
+                return self._json(200, result)
+            if parsed.path == "/api/roarm/engineering":
+                result = owner.engineering(
+                    payload.get("packet"),
+                    authority=payload.get("authority"),
+                    operator=payload.get("operator"),
+                    mission=payload.get("mission"),
+                    trace_id=payload.get("trace_id"),
+                )
+                return self._json(200, result)
+            return self._json(404, {"error": "not found", "path": parsed.path})
+
         def do_HEAD(self):
             # Support HEAD for simple health checks without body.
             parsed = urlparse(self.path)
@@ -211,6 +257,10 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
 
         def _api(self, path: str, query: str):
             qs = parse_qs(query)
+            if path == "/api/roarm/skills":
+                if owner is None:
+                    return self._json(503, {"accepted": False, "reason": "CONTROL_OWNER_UNAVAILABLE"})
+                return self._json(200, owner.catalog())
             if path == "/api/health":
                 return self._json(200, {
                     "ok": True,
@@ -265,8 +315,35 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
     return Handler
 
 
+def build_owner(state_dir: Path):
+    """The Mission Control process is the only operational-state writer."""
+    root = Path(__file__).resolve().parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from control.owner import SkillOwner
+    from control.production import ProductionCommandPort, readiness_from_snapshot
+    from guardian.config import load_config
+    roarm = {}
+    try:
+        loaded = load_config(root / "config" / "services.yaml")
+        if isinstance(loaded.get("roarm"), dict):
+            roarm = loaded["roarm"]
+    except (OSError, ValueError, KeyError, TypeError):
+        roarm = {}
+    workspace = roarm.get("workspace_mm") if isinstance(roarm.get("workspace_mm"), dict) else None
+    command_root = roarm.get("command_root") or "/home/KA_PI/roarm-m3-pattern-cmd"
+    snapshot = Path(state_dir) / "snapshot.json"
+    return SkillOwner(
+        Path(state_dir) / "operational-state.json",
+        ProductionCommandPort(command_root),
+        lambda: readiness_from_snapshot(snapshot),
+        utcnow,
+        workspace,
+    )
+
+
 def parse_args(argv=None):
-    p = argparse.ArgumentParser(description="SYZYGY Mission Control V0.1 LAN UI server (read-only)")
+    p = argparse.ArgumentParser(description="SYZYGY Mission Control LAN UI and RoArm skill API")
     p.add_argument("--host", default=os.environ.get("MC_HOST", DEFAULT_HOST),
                    help="Bind address (default 127.0.0.1; use 0.0.0.0 for LAN). NEVER Cloudflare.")
     p.add_argument("--port", type=int, default=int(os.environ.get("MC_PORT", DEFAULT_PORT)))
@@ -292,7 +369,8 @@ def main(argv=None):
             "WARNING: bind host %r looks unusual. Mission Control must stay LAN-only; "
             "do not publish via Cloudflare.\n" % (args.host,)
         )
-    handler = make_handler(state_dir, ui_dir, args.hard_stale_s, args.events_limit)
+    owner = build_owner(state_dir)
+    handler = make_handler(state_dir, ui_dir, args.hard_stale_s, args.events_limit, owner)
     httpd = ThreadingHTTPServer((args.host, args.port), handler)
     sys.stderr.write(
         "SYZYGY Mission Control V0.1 listening on http://%s:%d/\n"
