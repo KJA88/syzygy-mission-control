@@ -45,4 +45,5 @@ Stored timestamps are UTC. UI may render local time.
 
 When present, `state_engine` is a versioned read-only entity/attribute model.
 Its assertion semantics and safety rules are defined in `docs/STATE_ENGINE.md`.
-Existing consumers may ignore this additive field.
+`state_engine.operational` is the authoritative commanded record and is not an
+observation. Existing consumers may ignore these additive fields.

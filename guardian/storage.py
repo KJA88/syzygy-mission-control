@@ -29,6 +29,8 @@ def _mark_state_engine_stale(snapshot):
         if isinstance(health, dict):
             health.update(value=None, knowledge='unknown', freshness='stale',
                           confidence=None, reason='SNAPSHOT_STALE')
+    from .state_engine import mark_operational_unproven
+    mark_operational_unproven(state)
 
 
 def read_snapshot(path, now, hard_stale=120):

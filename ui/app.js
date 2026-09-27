@@ -25,6 +25,7 @@
     servicesCount: document.getElementById("services-count"),
     paths: document.getElementById("paths"),
     pathsCount: document.getElementById("paths-count"),
+    operational: document.getElementById("operational"),
     roarm: document.getElementById("roarm"),
     auth: document.getElementById("auth"),
     authSummary: document.getElementById("auth-summary"),
@@ -539,6 +540,47 @@
       .join("");
   }
 
+  function renderOperational(snap) {
+    const op = snap && snap.state_engine && snap.state_engine.operational;
+    const known = function (value) {
+      return value == null || value === "" ? "unknown" : String(value);
+    };
+    const permitted = !op
+      ? "unknown"
+      : op.motion_permitted === true
+        ? "true"
+        : op.motion_permitted === false
+          ? "false"
+          : "unknown";
+    const fault = !op
+      ? "unknown"
+      : op.fault_class || op.fault_reason
+        ? [op.fault_class, op.fault_reason].filter(Boolean).join(" · ")
+        : "unknown";
+    const transition = !op
+      ? "unknown"
+      : [
+          (op.previous_state ? op.previous_state + " → " : "") + known(op.state),
+          op.transition_reason || "unknown",
+          op.transition_at ? fmtPT(op.transition_at) : "unknown",
+        ].join(" · ");
+    const row = function (label, item) {
+      return "<div>" + esc(label) + ": <strong>" + esc(item) + "</strong></div>";
+    };
+    els.operational.innerHTML =
+      '<div class="roarm-summary">' +
+      row("Operational state", known(op && op.state)) +
+      row("Active operator", known(op && op.operator)) +
+      row("Active skill/action", known(op && op.skill)) +
+      row("Active mission", known(op && op.mission)) +
+      row("Motion permitted", permitted) +
+      row("Motion authority", known(op && op.motion_authority)) +
+      row("Last transition", transition) +
+      row("Fault reason", fault) +
+      row("Last completed action", known(op && op.last_completed_action)) +
+      "</div>";
+  }
+
   function renderSnapshot(snap, eventsPayload) {
     const g = snap.guardian || {};
     const sys = snap.system || {};
@@ -552,6 +594,7 @@
     setChip(els.sysStatus, sys.status);
     els.sysReason.textContent = sys.reason || "(no reason)";
 
+    renderOperational(snap);
     renderNodes(snap.nodes);
     renderServices(snap.services);
     renderPaths(snap.paths);
@@ -592,6 +635,7 @@
       els.refreshBadge.textContent = "refresh " + Math.round(REFRESH_MS / 1000) + "s";
       els.refreshBadge.className = "pill GREEN";
     } catch (err) {
+      renderOperational(null);
       renderRoarm(null, {}, {});
       renderAuth([], [], {}, {});
       els.authSummary.textContent = "Connection lost — current status unavailable";
