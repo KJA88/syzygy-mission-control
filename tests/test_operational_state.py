@@ -207,6 +207,32 @@ class OperationalRecoveryTests(unittest.TestCase):
                     self.assertIsNone(recovered["skill"])
                     self.assertEqual(recovered["last_known_good"], "IDLE")
 
+    def test_valid_fault_recovery_keeps_the_fault_class(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "operational-state.json"
+            atomic_json(path, drive(PATHS["FAULT"]))
+            recovered = OperationalStateStore(path).recover(NOW + 3, "reboot")
+            self.assertEqual(recovered["state"], "FAULT")
+            self.assertEqual(recovered["fault_class"], "TEST_FAULT")
+            self.assertEqual(recovered["fault_reason"], "broken")
+            self.assertFalse(recovered["motion_permitted"])
+            self.assertIsNone(recovered["motion_authority"])
+            self.assertEqual(recovered["last_known_good"], "IDLE")
+
+    def test_fault_without_class_recovers_as_invalid(self):
+        for fault_class in (None, "", "   "):
+            with self.subTest(fault_class=fault_class):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "operational-state.json"
+                    record = drive(PATHS["FAULT"])
+                    record["fault_class"] = fault_class
+                    atomic_json(path, record)
+                    recovered = OperationalStateStore(path).recover(NOW + 4, "reboot")
+                    self.assertEqual(recovered["state"], "IDLE")
+                    self.assertEqual(recovered["transition_reason"], "RECOVERY_INVALID")
+                    self.assertIsNone(recovered["fault_class"])
+                    self.assertFalse(recovered["motion_permitted"])
+
     def test_invalid_record_recovers_to_idle(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "operational-state.json"

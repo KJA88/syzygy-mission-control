@@ -285,6 +285,8 @@ def recover_operational_state(raw, now, trace_id):
         return _new_operational_state(now, trace_id, "INITIAL")
     if not _valid_operational_record(raw):
         return _new_operational_state(now, trace_id, "RECOVERY_INVALID")
+    if raw["state"] == "FAULT" and not _text(raw.get("fault_class")):
+        return _new_operational_state(now, trace_id, "RECOVERY_INVALID")
     if raw["state"] in ACTIVE_MOTION_STATES:
         recovered = _new_operational_state(now, trace_id, "RECOVERY_UNPROVEN_MOTION")
         recovered["state"] = "STOPPED"

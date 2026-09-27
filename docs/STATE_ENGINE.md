@@ -79,6 +79,11 @@ separate object, `state_engine.operational`, written only by Guardian through
 `state/operational-state.json`. The UI does not write it. It does not change
 the system health rollup and it does not command the arm.
 
+Phase 2 provides the authoritative state model, the store, and the transition
+API. There is intentionally no external or live transition ingress yet.
+Guardian currently recovers and publishes the state. Phase 3 skills and
+controller integration will invoke transitions.
+
 States: `IDLE`, `PREPARING`, `MOVING`, `COMPLETE`, `FAULT`, `STOPPED`.
 
 Legal transitions:
@@ -97,9 +102,11 @@ requires a motion authority. `FAULT` requires a fault class. `motion_permitted`
 is true only while `PREPARING` has an authority or while `MOVING`. Phase 2
 exposes that flag. It does not enforce it on the RoArm command path.
 
-On process restart, `IDLE`, `COMPLETE`, `FAULT`, and `STOPPED` are recovered as
-non-moving state. `PREPARING` and `MOVING` cannot be proven current, so recovery
-enters `STOPPED` with reason `RECOVERY_UNPROVEN_MOTION` and
+On process restart, `IDLE`, `COMPLETE`, a `FAULT` with a non-empty
+`fault_class`, and `STOPPED` are recovered as non-moving state. A persisted
+`FAULT` without that class is invalid and recovers to `IDLE` with reason
+`RECOVERY_INVALID`. `PREPARING` and `MOVING` cannot be proven current, so
+recovery enters `STOPPED` with reason `RECOVERY_UNPROVEN_MOTION` and
 `motion_permitted: false`. A missing record starts at `IDLE`. An invalid record
 starts at `IDLE` with reason `RECOVERY_INVALID`.
 
