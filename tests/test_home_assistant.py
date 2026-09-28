@@ -195,8 +195,15 @@ class HomeAssistantTests(unittest.TestCase):
         loaded = policy_from_config({"token": TOKEN, "write_allow": []}, {"HA_BASE_URL": "http://ha.example", "HA_TOKEN": ""})
         self.assertEqual(loaded["token"], "")
         text = (ROOT / "config" / "services.yaml").read_text(encoding="utf-8")
-        self.assertIn("write_allow: [switch.1_plug_shelly]", text)
-        self.assertEqual(text.count("switch.1_plug_shelly"), 1)
+        allow = "write_allow: [switch.1_plug_shelly, switch.shellyplugusg4_acebe6f74038, switch.shellyplugusg4_acebe6f75888, switch.shellyplugusg4_58e6c537a850]"
+        self.assertIn(allow, text)
+        for entity_id in (
+            "switch.1_plug_shelly",
+            "switch.shellyplugusg4_acebe6f74038",
+            "switch.shellyplugusg4_acebe6f75888",
+            "switch.shellyplugusg4_58e6c537a850",
+        ):
+            self.assertEqual(text.count(entity_id), 1)
         self.assertNotIn("write_allow: []", text)
         self.assertNotRegex(text, r"(?m)^HA_TOKEN\s*[:=]")
         self.assertNotIn(TOKEN, text)
