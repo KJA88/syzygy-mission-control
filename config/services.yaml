@@ -50,7 +50,7 @@ home_assistant:
   ui_url: ""
   read_domains: [sensor, binary_sensor, switch, light]
   write_domains: [switch, light]
-  write_allow: [switch.1_plug_shelly]
+  write_allow: [switch.1_plug_shelly, switch.shellyplugusg4_acebe6f74038, switch.shellyplugusg4_acebe6f75888, switch.shellyplugusg4_58e6c537a850]
   exclude: []
   include: []
 
