@@ -1,0 +1,21 @@
+[Unit]
+Description=SYZYGY Home Assistant MCP (localhost only)
+Documentation=file:///home/KA_PI/syzygy-mission-control/docs/MISSION_CONTROL.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=KA_PI
+WorkingDirectory=/home/KA_PI/syzygy-mission-control
+Environment=HA_MCP_HOST=127.0.0.1
+Environment=HA_MCP_PORT=8095
+EnvironmentFile=-/home/KA_PI/syzygy-runtime/home-assistant.env
+ExecStart=/home/KA_PI/syzygy-mission-control/scripts/run-home-assistant-mcp.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

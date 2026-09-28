@@ -15,6 +15,7 @@ Environment=MC_PORT=9070
 Environment=MC_STATE_DIR=/home/KA_PI/syzygy-mission-control/state
 Environment=MC_UI_DIR=/home/KA_PI/syzygy-mission-control/ui
 Environment=MC_HARD_STALE_S=120
+EnvironmentFile=-/home/KA_PI/syzygy-runtime/home-assistant.env
 ExecStart=/home/KA_PI/syzygy-mission-control/scripts/run-mission-control.sh
 Restart=on-failure
 RestartSec=5

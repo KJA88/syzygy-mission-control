@@ -18,6 +18,7 @@
       <button type="button" class="nav-button" data-view="perception">Perception</button>
       <button type="button" class="nav-button" data-view="robots">Robots</button>
       <button type="button" class="nav-button" data-view="devices">Devices</button>
+      <button type="button" class="nav-button" data-view="home">Home</button>
       <button type="button" class="nav-button" data-view="events">Events</button>
       <button type="button" class="nav-button" data-view="system">System</button>
       <button type="button" class="nav-button" data-view="settings">Settings</button>
@@ -39,6 +40,7 @@
           <article class="card"><h2>Alerts</h2><p id="overview-alerts">None</p></article>
           <article class="card"><h2>Operational state</h2><p id="overview-operational">unknown</p></article>
           <article class="card"><h2>Perception</h2><p id="overview-perception">Waiting for Vision Hub</p></article>
+          <article class="card"><h2>Home</h2><p id="overview-home">Waiting for Home Assistant</p></article>
           <article class="card"><h2>Robots</h2><p id="overview-robots">Waiting for RoArm</p></article>
           <article class="card"><h2>Activity</h2><p id="overview-activity">No events yet</p></article>
         </div>
@@ -125,6 +127,21 @@
         <div id="device-list" class="cards-grid"></div>
       </section>
 
+      <section id="view-home" class="view">
+        <div class="section-head">
+          <h1>Home</h1>
+          <p id="home-status" class="hint">Waiting for Home Assistant</p>
+        </div>
+        <p><a id="home-assistant-link" href="#" target="_blank" rel="noopener">Open Home Assistant</a></p>
+        <div id="home-counts" class="stack"></div>
+        <h2>Sensors</h2>
+        <div id="home-sensors" class="cards-grid"></div>
+        <h2>Binary sensors</h2>
+        <div id="home-binary" class="cards-grid"></div>
+        <h2>Switches and lights</h2>
+        <div id="home-controls" class="cards-grid"></div>
+      </section>
+
       <section id="view-events" class="view">
         <h1>Events</h1>
         <section class="card activity-card">
@@ -207,11 +224,13 @@
           <h2>Subsystem consoles</h2>
           <p class="hint">Detailed camera engineering, gallery cleanup, and credentials stay in Vision Hub.</p>
           <p><a id="vision-hub-link" href="#" target="_blank" rel="noopener">Open Vision Hub</a></p>
+          <p class="hint">Home Assistant owns sensors, switches, and lights. The address comes from the bridge once it is configured.</p>
+          <p><a id="home-assistant-settings-link" href="#" target="_blank" rel="noopener">Open Home Assistant</a></p>
         </article>
       </section>
 
       <footer class="footer">
-        <span>LAN cockpit · Guardian observes · Vision Hub owns cameras · RoArm skills own arm motion</span>
+        <span>LAN cockpit · Guardian observes · Vision Hub owns cameras · RoArm skills own arm motion · Home Assistant owns home devices</span>
         <span id="served-meta" class="mono muted"></span>
       </footer>
     </div>

@@ -200,7 +200,31 @@ def _vision_from_config(root: Path):
     )
 
 
-def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None):
+def _home_down():
+    return {
+        "available": False,
+        "reason": "HA_UNCONFIGURED",
+        "ui_url": None,
+        "counts": {},
+        "entities": [],
+    }
+
+
+def _home_from_config(root: Path):
+    from guardian.config import load_config
+    from home.adapter import HomeAssistant, policy_from_config
+    raw = {}
+    try:
+        loaded = load_config(root / "config" / "services.yaml")
+        if isinstance(loaded.get("home_assistant"), dict):
+            raw = loaded["home_assistant"]
+    except (OSError, ValueError, KeyError, TypeError):
+        raw = {}
+    policy = policy_from_config(raw)
+    return HomeAssistant(policy, timeout=policy["timeout"])
+
+
+def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None):
     snapshot_path = state_dir / "snapshot.json"
     events_path = state_dir / "events.jsonl"
 
@@ -249,6 +273,14 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 if vision is None:
                     return self._json(200, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
                 return self._json(200, vision.ptz(payload.get("camera"), payload.get("dir")))
+            if parsed.path == "/api/home/action":
+                if home is None:
+                    return self._json(200, {"accepted": False, "reason": "HA_UNCONFIGURED"})
+                return self._json(200, home.act(
+                    payload.get("entity_id"),
+                    payload.get("action"),
+                    payload.get("brightness"),
+                ))
             if owner is None:
                 return self._json(503, {"accepted": False, "result": "rejected", "reason": "CONTROL_OWNER_UNAVAILABLE"})
             if parsed.path == "/api/roarm/skills":
@@ -302,6 +334,14 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                     return self._json(200, {"available": False, "reason": "VISION_HUB_UNAVAILABLE", "snapshots": []})
                 camera = (qs.get("camera") or [None])[0]
                 return self._json(200, vision.snapshots(camera))
+            if path == "/api/home/entities":
+                if home is None:
+                    return self._json(200, _home_down())
+                return self._json(200, home.entity_view())
+            if path == "/api/home/status":
+                if home is None:
+                    return self._json(200, {"available": False, "reason": "HA_UNCONFIGURED", "ui_url": None, "counts": {}})
+                return self._json(200, home.status())
             if path == "/api/devices":
                 cameras = []
                 if vision is not None:
@@ -311,7 +351,16 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 if isinstance(snap.get("roarm"), dict):
                     roarm = snap["roarm"]
                 from perception.hub import devices_from
-                return self._json(200, {"devices": devices_from(cameras, roarm)})
+                devices = devices_from(cameras, roarm)
+                if home is not None:
+                    try:
+                        view = home.entity_view()
+                    except Exception:
+                        view = {"available": False}
+                    if isinstance(view, dict) and view.get("available") is True:
+                        from home.adapter import devices_from_entities
+                        devices.extend(devices_from_entities(view.get("entities") or []))
+                return self._json(200, {"devices": devices})
             if path.startswith("/api/perception/snapshot/"):
                 if vision is None:
                     return self._json(503, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
@@ -442,7 +491,9 @@ def main(argv=None):
             "do not publish via Cloudflare.\n" % (args.host,)
         )
     owner = build_owner(state_dir)
-    vision = _vision_from_config(Path(__file__).resolve().parent.parent)
+    root = Path(__file__).resolve().parent.parent
+    vision = _vision_from_config(root)
+    home = _home_from_config(root)
     interval = 10.0
     try:
         from guardian.config import load_config
@@ -458,7 +509,7 @@ def main(argv=None):
             time.sleep(interval)
 
     threading.Thread(target=heartbeat_loop, name="control-owner-heartbeat", daemon=True).start()
-    handler = make_handler(state_dir, ui_dir, args.hard_stale_s, args.events_limit, owner, vision)
+    handler = make_handler(state_dir, ui_dir, args.hard_stale_s, args.events_limit, owner, vision, home)
     httpd = ThreadingHTTPServer((args.host, args.port), handler)
     sys.stderr.write(
         "SYZYGY Mission Control V0.1 listening on http://%s:%d/\n"

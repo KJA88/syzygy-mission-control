@@ -947,6 +947,134 @@
     }).join("") || "<p>No snapshots</p>";
   }
 
+  function homeCard(entity) {
+    const unit = entity.unit ? " " + entity.unit : "";
+    const presence = entity.available ? "online" : "offline";
+    return '<article class="card"><h2>' + esc(entity.name) + "</h2>" +
+      "<p>" + esc(entity.state) + esc(unit) + " · " + presence + "</p>" +
+      "<p>" + esc(entity.entity_id) + "</p></article>";
+  }
+
+  function homeControl(entity) {
+    const actions = [];
+    if (entity.available && entity.writable) {
+      if ((entity.capabilities || []).indexOf("turn_on") >= 0) {
+        actions.push('<button type="button" data-home-action="turn_on" data-entity="' + esc(entity.entity_id) + '">On</button>');
+      }
+      if ((entity.capabilities || []).indexOf("turn_off") >= 0) {
+        actions.push('<button type="button" data-home-action="turn_off" data-entity="' + esc(entity.entity_id) + '">Off</button>');
+      }
+      if ((entity.capabilities || []).indexOf("brightness") >= 0) {
+        actions.push('<label>Brightness<input type="number" min="0" max="255" data-home-brightness="' + esc(entity.entity_id) + '"></label>');
+        actions.push('<button type="button" data-home-action="set_brightness" data-entity="' + esc(entity.entity_id) + '">Set</button>');
+      }
+    }
+    return '<article class="card" data-home-card="' + esc(entity.entity_id) + '"><h2>' + esc(entity.name) + "</h2>" +
+      '<p class="home-state">' + esc(entity.state) + " · " + (entity.available ? "online" : "offline") + "</p>" +
+      '<div class="home-actions">' + actions.join("") + "</div></article>";
+  }
+
+  function bindHome(node) {
+    if (!node || typeof node.querySelectorAll !== "function") return;
+    node.querySelectorAll("[data-home-action]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        const entity = button.getAttribute("data-entity");
+        const action = button.getAttribute("data-home-action");
+        let brightness = null;
+        if (action === "set_brightness") {
+          const input = node.querySelector('[data-home-brightness="' + entity + '"]');
+          const raw = input ? String(input.value) : "";
+          if (!/^\d+$/.test(raw)) {
+            setText("home-status", "MALFORMED_PARAMETERS");
+            return;
+          }
+          brightness = Number(raw);
+        }
+        postHome(entity, action, brightness);
+      });
+    });
+  }
+
+  async function postHome(entity, action, brightness) {
+    const body = { entity_id: entity, action: action };
+    if (brightness != null) body.brightness = brightness;
+    try {
+      const response = await fetch("/api/home/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      setText("home-status", payload && payload.accepted ? "requested" : ((payload && payload.reason) || "rejected"));
+    } catch (err) {
+      setText("home-status", "Home UNKNOWN / OFFLINE");
+    }
+  }
+
+  function renderHome(view) {
+    const linkIds = ["home-assistant-link", "home-assistant-settings-link"];
+    if (!view || view.available !== true) {
+      setText("home-status", "Home UNKNOWN / OFFLINE" + (view && view.reason ? " · " + view.reason : ""));
+      setText("overview-home", "UNKNOWN / OFFLINE");
+      ["home-counts", "home-sensors", "home-binary", "home-controls"].forEach(function (id) {
+        const node = document.getElementById(id);
+        if (node) node.innerHTML = "";
+      });
+      return;
+    }
+    const entities = Array.isArray(view.entities) ? view.entities : [];
+    setText("home-status", entities.length + " entities");
+    setText("overview-home", entities.length + " entities");
+    linkIds.forEach(function (id) {
+      const link = document.getElementById(id);
+      if (link && view.ui_url) link.href = view.ui_url;
+    });
+    const counts = document.getElementById("home-counts");
+    if (counts) {
+      const tally = view.counts || {};
+      counts.innerHTML = Object.keys(tally).map(function (domain) {
+        return "<p>" + esc(domain) + " · " + esc(tally[domain]) + "</p>";
+      }).join("") || "<p>No exposed entities</p>";
+    }
+    const sensors = document.getElementById("home-sensors");
+    const binary = document.getElementById("home-binary");
+    if (sensors) sensors.innerHTML = entities.filter(function (entity) { return entity.domain === "sensor"; }).map(homeCard).join("") || "<p>None</p>";
+    if (binary) binary.innerHTML = entities.filter(function (entity) { return entity.domain === "binary_sensor"; }).map(homeCard).join("") || "<p>None</p>";
+    const controls = document.getElementById("home-controls");
+    if (!controls) return;
+    const controllable = entities.filter(function (entity) {
+      return entity.domain === "switch" || entity.domain === "light";
+    });
+    const signature = controllable.map(function (entity) {
+      return [entity.entity_id, entity.writable, entity.available, (entity.capabilities || []).join("|")].join(":");
+    }).join(",");
+    if (controls.getAttribute("data-home") !== signature) {
+      controls.innerHTML = controllable.map(homeControl).join("") || "<p>None</p>";
+      controls.setAttribute("data-home", signature);
+      bindHome(controls);
+    } else {
+      controllable.forEach(function (entity) {
+        const card = typeof controls.querySelector === "function"
+          ? controls.querySelector('[data-home-card="' + entity.entity_id + '"]')
+          : null;
+        if (!card || typeof card.querySelector !== "function") return;
+        const state = card.querySelector(".home-state");
+        if (state) state.textContent = (entity.state || "unknown") + " · " + (entity.available ? "online" : "offline");
+      });
+    }
+  }
+
+  async function refreshHome() {
+    try {
+      const response = await fetch("/api/home/entities", { cache: "no-store" });
+      const view = response.ok ? await response.json() : null;
+      renderHome(view);
+    } catch (err) {
+      setText("home-status", "Home UNKNOWN / OFFLINE");
+      setText("overview-home", "UNKNOWN / OFFLINE");
+    }
+  }
+
   function renderDevices(payload) {
     const node = document.getElementById("device-list");
     if (!node || !payload || !Array.isArray(payload.devices)) return;
@@ -1035,6 +1163,7 @@
       if (evRes.ok) eventsPayload = await evRes.json();
       renderSnapshot(snap, eventsPayload);
       refreshPerception();
+      refreshHome();
       els.fetchError.classList.add("hidden");
       els.refreshBadge.textContent = "refresh " + Math.round(REFRESH_MS / 1000) + "s";
       els.refreshBadge.className = "pill GREEN";
