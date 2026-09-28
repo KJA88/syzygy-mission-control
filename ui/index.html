@@ -19,6 +19,7 @@
       <button type="button" class="nav-button" data-view="robots">Robots</button>
       <button type="button" class="nav-button" data-view="devices">Devices</button>
       <button type="button" class="nav-button" data-view="home">Home</button>
+      <button type="button" class="nav-button" data-view="missions">Missions</button>
       <button type="button" class="nav-button" data-view="events">Events</button>
       <button type="button" class="nav-button" data-view="system">System</button>
       <button type="button" class="nav-button" data-view="settings">Settings</button>
@@ -41,6 +42,7 @@
           <article class="card"><h2>Operational state</h2><p id="overview-operational">unknown</p></article>
           <article class="card"><h2>Perception</h2><p id="overview-perception">Waiting for Vision Hub</p></article>
           <article class="card"><h2>Home</h2><p id="overview-home">Waiting for Home Assistant</p></article>
+          <article class="card"><h2>Missions</h2><p id="overview-missions">Waiting for Mission Engine</p></article>
           <article class="card"><h2>Robots</h2><p id="overview-robots">Waiting for RoArm</p></article>
           <article class="card"><h2>Activity</h2><p id="overview-activity">No events yet</p></article>
         </div>
@@ -142,6 +144,26 @@
         <div id="home-controls" class="cards-grid"></div>
       </section>
 
+      <section id="view-missions" class="view">
+        <div class="section-head">
+          <h1>Missions</h1>
+          <p id="mission-status" class="hint">Waiting for Mission Engine</p>
+        </div>
+        <article class="card">
+          <div class="card-head"><h2>Active mission</h2></div>
+          <p id="mission-active">none</p>
+          <p id="mission-step" class="hint">step unknown</p>
+          <p id="mission-reason" class="hint">none</p>
+          <div class="mission-actions">
+            <button type="button" id="mission-stop">STOP</button>
+          </div>
+        </article>
+        <h2>Named missions</h2>
+        <div id="mission-list" class="cards-grid"></div>
+        <h2>Recent runs</h2>
+        <div id="mission-history" class="stack"></div>
+      </section>
+
       <section id="view-events" class="view">
         <h1>Events</h1>
         <section class="card activity-card">
@@ -230,7 +252,7 @@
       </section>
 
       <footer class="footer">
-        <span>LAN cockpit · Guardian observes · Vision Hub owns cameras · RoArm skills own arm motion · Home Assistant owns home devices</span>
+        <span>LAN cockpit · Guardian observes · Mission Engine coordinates · Vision Hub owns cameras · RoArm skills own arm motion · Home Assistant owns home devices</span>
         <span id="served-meta" class="mono muted"></span>
       </footer>
     </div>

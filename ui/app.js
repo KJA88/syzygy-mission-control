@@ -1110,6 +1110,79 @@
     }
   }
 
+  function bindMissionStarts(root) {
+    if (!root || typeof root.querySelectorAll !== "function") return;
+    root.querySelectorAll("[data-mission-start]").forEach(function (button) {
+      if (!button.addEventListener) return;
+      button.addEventListener("click", function () {
+        postMission("/api/missions/start", { mission: button.getAttribute("data-mission-start") });
+      });
+    });
+  }
+
+  async function postMission(url, body) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = response.ok ? await response.json() : {};
+      const reason = payload.reason || (payload.accepted ? payload.state : "MISSION_REQUEST_FAILED");
+      setText("mission-reason", reason || "none");
+      refreshMissions();
+    } catch (err) {
+      setText("mission-reason", "MISSION_REQUEST_FAILED");
+    }
+  }
+
+  function renderMissions(status, catalog, history) {
+    const available = status && status.available === true;
+    const active = status && status.active;
+    setText("mission-status", available ? ("Mission Engine " + (status.state || "IDLE")) : "Missions UNKNOWN / OFFLINE");
+    setText("overview-missions", available ? (status.state || "IDLE") : "UNKNOWN / OFFLINE");
+    setText("mission-active", active ? (active.name || active.mission_id || "mission") : "none");
+    setText("mission-step", active ? ((active.state || "unknown") + " · " + (active.step || "none")) : "none");
+    const reason = (active && active.reason) || (status && status.reason) || "none";
+    setText("mission-reason", reason);
+    const list = document.getElementById("mission-list");
+    if (list) {
+      const missions = catalog && Array.isArray(catalog.missions) ? catalog.missions : [];
+      list.innerHTML = missions.map(function (mission) {
+        return '<article class="card"><h2>' + esc(mission.name || mission.id) + "</h2>" +
+          "<p>" + esc(mission.id) + " · v" + esc(mission.version) + "</p>" +
+          "<p>Target " + esc(mission.target) + " · final " + esc(mission.final_state) + "</p>" +
+          '<div class="mission-actions"><button type="button" data-mission-start="' + esc(mission.id) + '">Start</button></div></article>';
+      }).join("") || "<p>None</p>";
+      bindMissionStarts(list);
+    }
+    const past = document.getElementById("mission-history");
+    if (!past) return;
+    const runs = history && Array.isArray(history.runs) ? history.runs : [];
+    past.innerHTML = runs.map(function (run) {
+      return "<p>" + esc(run.mission_id) + " · " + esc(run.state) + " · " + esc(run.reason || "none") +
+        " · " + esc(run.started_at || "") + "</p>";
+    }).join("") || "<p>None</p>";
+  }
+
+  async function refreshMissions() {
+    try {
+      const responses = await Promise.all([
+        fetch("/api/missions/status", { cache: "no-store" }),
+        fetch("/api/missions", { cache: "no-store" }),
+        fetch("/api/missions/history?limit=20", { cache: "no-store" }),
+      ]);
+      const payloads = [];
+      for (let index = 0; index < responses.length; index += 1) {
+        payloads.push(responses[index].ok ? await responses[index].json() : null);
+      }
+      renderMissions(payloads[0], payloads[1], payloads[2]);
+    } catch (err) {
+      setText("mission-status", "Missions UNKNOWN / OFFLINE");
+      setText("overview-missions", "UNKNOWN / OFFLINE");
+    }
+  }
+
   function showView(name) {
     if (!document.querySelectorAll) return;
     document.querySelectorAll(".view").forEach(function (view) {
@@ -1164,6 +1237,7 @@
       renderSnapshot(snap, eventsPayload);
       refreshPerception();
       refreshHome();
+      refreshMissions();
       els.fetchError.classList.add("hidden");
       els.refreshBadge.textContent = "refresh " + Math.round(REFRESH_MS / 1000) + "s";
       els.refreshBadge.className = "pill GREEN";
@@ -1177,6 +1251,13 @@
       els.refreshBadge.textContent = "refresh failed";
       els.refreshBadge.className = "pill RED";
     }
+  }
+
+  const missionStop = document.getElementById("mission-stop");
+  if (missionStop && missionStop.addEventListener) {
+    missionStop.addEventListener("click", function () {
+      postMission("/api/missions/stop", {});
+    });
   }
 
   tick();
