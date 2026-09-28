@@ -591,7 +591,7 @@
   }
 
   const moveButton = document.getElementById("ctrl-move");
-  if (moveButton) {
+  if (moveButton && moveButton.addEventListener) {
     moveButton.addEventListener("click", function () {
       const params = {
         x: optionalNumber("ctrl-x"),
@@ -608,19 +608,19 @@
     });
   }
   const homeButton = document.getElementById("ctrl-home");
-  if (homeButton) homeButton.addEventListener("click", function () { postSkill(skillBody("return_home", {})); });
+  if (homeButton && homeButton.addEventListener) homeButton.addEventListener("click", function () { postSkill(skillBody("return_home", {})); });
   const patternButton = document.getElementById("ctrl-pattern-run");
-  if (patternButton) {
+  if (patternButton && patternButton.addEventListener) {
     patternButton.addEventListener("click", function () {
       postSkill(skillBody("run_pattern", { pattern: controlValue("ctrl-pattern") }));
     });
   }
   const stopButton = document.getElementById("ctrl-stop");
-  if (stopButton) stopButton.addEventListener("click", function () { postSkill(skillBody("stop", {})); });
+  if (stopButton && stopButton.addEventListener) stopButton.addEventListener("click", function () { postSkill(skillBody("stop", {})); });
   const clearButton = document.getElementById("ctrl-clear");
-  if (clearButton) clearButton.addEventListener("click", function () { postSkill(skillBody("clear", {})); });
+  if (clearButton && clearButton.addEventListener) clearButton.addEventListener("click", function () { postSkill(skillBody("clear", {})); });
   const jsonButton = document.getElementById("ctrl-json-send");
-  if (jsonButton) {
+  if (jsonButton && jsonButton.addEventListener) {
     jsonButton.addEventListener("click", function () {
       let packet = null;
       try {

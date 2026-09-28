@@ -8,9 +8,14 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
+from guardian.aggregator import Guardian, build_snapshot
+from guardian.config import load_config
+from guardian.model import fact, stamp
+from guardian.probes import mcp
 from home.adapter import HomeAssistant, devices_from_entities, policy_from_config
-from home.mcp_server import TOOLS, handle_rpc
+from home.mcp_server import TOOLS, handle_rpc, load_adapter
 
 ROOT = Path(__file__).resolve().parents[1]
 TOKEN = "super-secret-token"
@@ -301,6 +306,92 @@ class HomeAssistantTests(unittest.TestCase):
         finally:
             httpd.shutdown()
             httpd.server_close()
+
+    def test_policy_timeout_is_shared_by_the_cockpit_and_mcp(self):
+        chosen = policy_from_config({"timeout_s": 2.5}, {"HA_BASE_URL": "http://ha.example", "HA_TOKEN": TOKEN})
+        self.assertEqual(HomeAssistant(chosen).timeout, 2.5)
+        self.assertEqual(HomeAssistant(chosen, timeout=chosen["timeout"]).timeout, 2.5)
+        with patch("guardian.config.load_config", return_value={"home_assistant": {"timeout_s": 2.5}}):
+            self.assertEqual(load_adapter().timeout, 2.5)
+
+    def test_optional_ha_outage_stays_off_the_required_rollup(self):
+        cfg = load_config(ROOT / "config" / "services.yaml")
+        home = next(service for service in cfg["services"] if service["id"] == "home-assistant-mcp")
+        self.assertIs(home["required"], False)
+        self.assertEqual(home["local_url"], "http://127.0.0.1:8095")
+        self.assertEqual(home["mcp_path"], "/mcp")
+        self.assertEqual(home["expected_tool_names"], [
+            "list_entities", "get_entity", "get_sensor", "turn_on", "turn_off", "set_brightness",
+        ])
+        self.assertIs(home["probe"]["tool_calls_allowed"], False)
+        self.assertFalse(home["probe"].get("functional_probe_enabled", False))
+        self.assertEqual(home.get("auth_probe", "off"), "off")
+        self.assertNotIn("public_url", home)
+        self.assertNotIn("cloudflared_unit", home)
+        now = 1800000000
+        evidence = {}
+        for node in cfg["nodes"]:
+            evidence[node["id"]] = {"observed_at": stamp(now), "services": [], "paths": []}
+        for service in cfg["services"]:
+            if not service["required"]:
+                continue
+            layers = {
+                "local_service": fact("green", True, now, "t"),
+                "local_port": fact("green", True, now, "t"),
+            }
+            if "health_url" in service:
+                layers["local_health"] = fact("green", True, now, "t")
+            if "probe" in service:
+                layers["local_mcp"] = fact("green", True, now, "t")
+            for camera in service.get("cameras", []):
+                layers["camera/" + camera["id"]] = fact("green", camera["required"], now, "t")
+            evidence[service["host"]]["services"].append({"id": service["id"], "layers": layers})
+        hidden = build_snapshot(cfg, evidence, {}, now, "t")
+        observed = next(service for service in hidden["services"] if service["id"] == "home-assistant-mcp")
+        self.assertFalse(observed["required"])
+        self.assertEqual(observed["status"], "unknown")
+        self.assertEqual(hidden["system"]["status"], "green")
+        self.assertEqual(hidden["guardian"]["status"], "green")
+        evidence["pi"]["services"].append({
+            "id": "home-assistant-mcp",
+            "layers": {"local_mcp": fact("red", True, now, "t", "MCP_HANDSHAKE_FAIL")},
+        })
+        down = build_snapshot(cfg, evidence, {}, now, "t")
+        failed = next(service for service in down["services"] if service["id"] == "home-assistant-mcp")
+        self.assertEqual(failed["status"], "red")
+        self.assertFalse(failed["required"])
+        self.assertEqual(down["system"]["status"], "green")
+        self.assertEqual(down["guardian"]["status"], "green")
+        methods = []
+
+        def transport(url, timeout, payload, headers, rpc_id):
+            methods.append(payload["method"])
+            if payload["method"] == "notifications/initialized":
+                return None, {}
+            if payload["method"] == "initialize":
+                result = {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "syzygy-home-assistant", "version": "0.1.0"},
+                }
+            else:
+                result = {"tools": [{"name": name} for name in home["expected_tool_names"]]}
+            return {"jsonrpc": "2.0", "id": payload["id"], "result": result}, {}
+
+        health, catalog = mcp(home, "http://127.0.0.1:8095/mcp", False, "t", transport)
+        self.assertEqual(methods, ["initialize", "notifications/initialized", "tools/list"])
+        self.assertNotIn("tools/call", methods)
+        self.assertEqual(health["status"], "green")
+        self.assertEqual(catalog["status"], "green")
+        quiet = fact("green", False, now, "t")
+        with patch("guardian.aggregator.agent_evidence", return_value=None), \
+                patch("guardian.aggregator.mcp", return_value=(quiet, quiet)) as public, \
+                patch("guardian.aggregator.auth_mcp", return_value=quiet) as auth, \
+                patch("guardian.aggregator.probe_roarm", return_value={"status": "green"}):
+            Guardian(cfg).tick()
+        probed = [call.args[0]["id"] for call in public.call_args_list]
+        self.assertNotIn("home-assistant-mcp", probed)
+        self.assertNotIn("home-assistant-mcp", [call.args[0]["id"] for call in auth.call_args_list])
 
 
 if __name__ == "__main__":

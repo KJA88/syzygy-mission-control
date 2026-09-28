@@ -387,6 +387,39 @@ services:
     dependencies: []
     verified_live: 2026-09-23
 
+  - id: home-assistant-mcp
+    display_name: Home Assistant MCP
+    host: pi
+    required: false
+    systemd_unit: syzygy-home-assistant-mcp.service
+    local_url: http://127.0.0.1:8095
+    mcp_path: /mcp
+    expected_tools: 6
+    expected_tool_names:
+      - list_entities
+      - get_entity
+      - get_sensor
+      - turn_on
+      - turn_off
+      - set_brightness
+    expected_tool_names_sha256: ccd83b7e22ec9123b48e7f4cede75737085074ce0d39ce7c7ebf5f5f8fb34ef1
+    probe:
+      type: mcp_initialize
+      protocol_version: "2024-11-05"
+      catalog_check: tools/list
+      catalog_mismatch_status: YELLOW
+      tool_calls_allowed: false
+      session_required: false
+      functional_probe_enabled: false
+      server_info:
+        name: syzygy-home-assistant
+        version: "0.1.0"
+    timeout_s: 4
+    interval_s: 60
+    auth_probe: "off"
+    auth_required: false
+    dependencies: []
+
 paths:
   - id: cloudflare-pi
     display_name: Pi Cloudflare Tunnel Inventory

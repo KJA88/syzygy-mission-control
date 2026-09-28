@@ -181,13 +181,13 @@ def devices_from_entities(entities):
 
 
 class HomeAssistant:
-    def __init__(self, policy, opener=None, timeout=4.0):
+    def __init__(self, policy, opener=None, timeout=None):
         self.policy = policy
         self.base_url = str(policy.get("base_url") or "").rstrip("/")
         self.token = str(policy.get("token") or "")
         self.ui_url = policy.get("ui_url")
         self.opener = opener or urllib.request.urlopen
-        self.timeout = timeout
+        self.timeout = policy.get("timeout", 4.0) if timeout is None else timeout
 
     def _ui(self):
         return self.ui_url or self.base_url or None

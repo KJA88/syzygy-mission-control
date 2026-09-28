@@ -197,7 +197,8 @@ def load_adapter():
             raw = loaded["home_assistant"]
     except (OSError, ValueError, KeyError, TypeError):
         raw = {}
-    return HomeAssistant(policy_from_config(raw))
+    policy = policy_from_config(raw)
+    return HomeAssistant(policy, timeout=policy["timeout"])
 
 
 def main(argv=None):

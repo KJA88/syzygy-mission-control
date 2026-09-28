@@ -117,6 +117,6 @@ test('stale Guardian heartbeat overrides previously green RoArm state', async ()
   };
   const el = await render(snap);
   assert.match(el.roarm.innerHTML, /status-chip UNKNOWN/);
-  assert.match(el.roarm.innerHTML, /SNAPSHOT_STALE · Stale/);
+  assert.match(el.roarm.innerHTML, /SNAPSHOT_STALE · T105 stale/);
   assert.doesNotMatch(el.roarm.innerHTML, /status-chip GREEN/);
 });
