@@ -42,18 +42,27 @@ class FakeHome:
         self.release = None
         self.entered = threading.Event()
         self.fail_action = None
+        self.reject_turn_offs = 0
+        self.lag_off_reads = 0
+        self._lag = 0
         self.hold_state = False
 
     def entity_view(self):
         if not self.view_available:
             return {"available": False, "reason": self.view_reason or "HA_UNAVAILABLE", "entities": []}
+        reported = self.state
+        if self._lag:
+            reported = "on"
+            self._lag -= 1
+            if self._lag == 0:
+                self.state = "off"
         capabilities = ["read", "turn_on", "turn_off"] if self.writable else ["read"]
         return {
             "available": True,
             "reason": None,
             "entities": [{
                 "entity_id": self.entity_id,
-                "state": self.state,
+                "state": reported,
                 "available": self.available,
                 "writable": self.writable,
                 "capabilities": capabilities,
@@ -68,7 +77,12 @@ class FakeHome:
             self.release.wait(2)
         if self.fail_action == action:
             return {"accepted": False, "reason": "POLICY_DENIED"}
-        if not self.hold_state:
+        if action == "turn_off" and self.reject_turn_offs:
+            self.reject_turn_offs -= 1
+            return {"accepted": False, "reason": "POLICY_DENIED"}
+        if action == "turn_off" and self.lag_off_reads:
+            self._lag = self.lag_off_reads
+        elif not self.hold_state:
             if action == "turn_on":
                 self.state = "on"
             elif action == "turn_off":
@@ -130,6 +144,7 @@ class MissionTests(unittest.TestCase):
             self.assertIn(field, run)
         self.assertEqual(mission.status()["state"], "IDLE")
         self.assertTrue(mission.health_summary()["available"])
+        self.assertFalse(run["energized"])
 
     def test_second_physical_mission_is_rejected_while_one_owns_the_engine(self):
         home = FakeHome()
@@ -239,6 +254,10 @@ class MissionTests(unittest.TestCase):
             ("turn_off", "cleanup"),
         ])
         self.assertEqual(home.state, "off")
+        self.assertFalse(run["energized"])
+        self.assertTrue(run["cleanup"]["accepted"])
+        self.assertTrue(run["cleanup"]["verified"])
+        self.assertEqual([item["phase"] for item in run["actions"]].count("cleanup"), 1)
         self.assertNotIn("wait", [item["action"] for item in run["actions"]])
 
     def test_stop_during_an_inflight_action_does_not_run_later_normal_steps(self):
@@ -256,6 +275,68 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(run["state"], "STOPPED")
         self.assertEqual([item["phase"] for item in run["actions"]], ["normal", "cleanup"])
         self.assertNotIn("turn_off", [item["action"] for item in run["actions"] if item["phase"] == "normal"])
+
+    def test_cleanup_waits_for_a_lagging_off_readback(self):
+        home = FakeHome()
+        home.lag_off_reads = 1
+
+        def before(run):
+            if run["step"] == "wait":
+                mission.stop()
+
+        mission = engine(home, before_step=before)
+        mission.start("shelly_plug_cycle")
+        run = mission.history(1)[0]
+        cleanup = run["actions"][-1]
+        self.assertEqual(cleanup["phase"], "cleanup")
+        self.assertEqual(cleanup["observed_state"], "on")
+        self.assertTrue(run["cleanup"]["accepted"])
+        self.assertTrue(run["cleanup"]["verified"])
+        self.assertEqual(run["state"], "STOPPED")
+        self.assertEqual(run["reason"], "STOP_REQUESTED")
+        self.assertFalse(run["energized"])
+        self.assertEqual([item[1] for item in home.calls], ["turn_on", "turn_off"])
+
+    def test_rejected_turn_off_gets_one_cleanup_and_keeps_the_fault(self):
+        home = FakeHome()
+        home.reject_turn_offs = 1
+        mission = engine(home)
+        mission.start("shelly_plug_cycle")
+        run = mission.history(1)[0]
+        self.assertEqual(run["state"], "FAULT")
+        self.assertEqual(run["reason"], "POLICY_DENIED")
+        self.assertEqual([(item["action"], item["phase"], item["accepted"]) for item in run["actions"]], [
+            ("turn_on", "normal", True),
+            ("turn_off", "normal", False),
+            ("turn_off", "cleanup", True),
+        ])
+        self.assertEqual(run["cleanup"]["reason"], "ACTION_ACCEPTED")
+        self.assertTrue(run["cleanup"]["verified"])
+        self.assertFalse(run["energized"])
+        self.assertEqual([item[1] for item in home.calls], ["turn_on", "turn_off", "turn_off"])
+
+    def test_switch_cycle_rejects_final_state_on_before_any_action(self):
+        directory = tempfile.mkdtemp()
+        path = Path(directory) / "missions.yaml"
+        path.write_text(
+            "missions:\n"
+            "  - id: shelly_plug_cycle\n"
+            "    name: Shelly plug cycle\n"
+            "    version: 1\n"
+            "    kind: switch_cycle\n"
+            "    physical: true\n"
+            "    subsystem: home_assistant\n"
+            "    target: switch.1_plug_shelly\n"
+            "    final_state: \"on\"\n"
+            "    wait_s: 1\n"
+            "    observe_timeout_s: 1\n",
+            encoding="utf-8",
+        )
+        home = FakeHome()
+        mission = open_engine(path, home, lambda: (True, None), Path(directory) / "runs.json")
+        self.assertFalse(mission.status()["available"])
+        self.assertEqual(mission.start("shelly_plug_cycle")["reason"], "MISSION_DEFINITION_INVALID")
+        self.assertEqual(home.calls, [])
 
     def test_bridge_loss_during_the_mission_is_a_bounded_fault(self):
         home = FakeHome()

@@ -187,7 +187,9 @@ class MissionEngine:
                 return
             off = self._command(run, definition, "turn_off", "normal")
             if not off["accepted"]:
-                self._finish(run, "FAULT", off["reason"] or "HA_HTTP")
+                run["reason"] = off["reason"] or "HA_HTTP"
+                self._touch(run)
+                self._cleanup(run, definition, keep_reason=True)
                 return
             self._enter(run, "RUNNING", "verify")
             if not self._observe(run, definition, definition.final_state):
@@ -236,6 +238,8 @@ class MissionEngine:
             view_reason, entity = self._entity(definition.target)
             state = entity.get("state") if isinstance(entity, dict) else None
             if view_reason is None and state == want:
+                if want == definition.final_state:
+                    run["energized"] = False
                 self._pass(run, "observe_" + want)
                 return True
             if view_reason and view_reason != "UNKNOWN_ENTITY":
@@ -260,14 +264,21 @@ class MissionEngine:
         return not self._stop.is_set()
 
     def _cleanup(self, run, definition, keep_reason=False):
+        """One safe turn_off, then the bounded final-state observation. No retry."""
         prior = run.get("reason")
         self._enter(run, "RUNNING", "cleanup")
         record = self._command(run, definition, "turn_off", "cleanup")
-        restored = record["accepted"] and record["observed_state"] == definition.final_state
+        verified = self._observe(run, definition, definition.final_state)
+        run["cleanup"] = {
+            "accepted": record["accepted"],
+            "reason": record["reason"],
+            "verified": verified,
+        }
+        self._touch(run)
         if keep_reason:
             self._finish(run, "FAULT", prior or "ACTION_STATE_MISMATCH")
             return
-        self._finish(run, "STOPPED", "STOP_REQUESTED" if restored else "CLEANUP_FAILED")
+        self._finish(run, "STOPPED", "STOP_REQUESTED" if verified else "CLEANUP_FAILED")
 
     def _command(self, run, definition, action, phase):
         if action not in {"turn_on", "turn_off"}:

@@ -93,7 +93,7 @@ def _one(raw):
     if target is None or domain_of(target) not in {"switch", "light"}:
         raise ValueError("MISSION_DEFINITION_INVALID")
     final_state = raw.get("final_state")
-    if final_state not in {"off", "on"}:
+    if final_state != "off":
         raise ValueError("MISSION_DEFINITION_INVALID")
     wait_s = _number(raw.get("wait_s"), 0, 30)
     observe = _number(raw.get("observe_timeout_s"), 0, 10)
