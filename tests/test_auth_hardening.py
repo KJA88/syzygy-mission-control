@@ -183,10 +183,12 @@ class AuthHardeningTests(unittest.TestCase):
 
     def test_batch_enables_exactly_six_read_only_nonblocking_auth_routes(self):
         cfg = load_config(Path(__file__).resolve().parents[1] / 'config/services.yaml')
-        services = [s for s in cfg['services'] if 'probe' in s]
+        services = [s for s in cfg['services'] if s.get('auth_probe') == 'guardian_identity']
         self.assertEqual({s['id'] for s in services}, {
             'dhras-mcp', 'fitbit-mcp', 'tv-mcp', 'pi-git-mcp',
             'polar-h10-mcp', 'jetson-git-mcp'})
+        local = [s for s in cfg['services'] if 'probe' in s and not s.get('public_url')]
+        self.assertEqual([s['id'] for s in local], ['home-assistant-mcp'])
         for service in services:
             with self.subTest(service=service['id']):
                 self.assertEqual(service['auth_probe'], 'guardian_identity')
