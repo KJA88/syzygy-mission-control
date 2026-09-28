@@ -1,0 +1,13 @@
+# Operator-started switch cycles. Perception events cannot start these.
+# final_state is quoted because YAML treats bare off/on as booleans.
+missions:
+  - id: shelly_plug_cycle
+    name: Shelly plug cycle
+    version: 1
+    kind: switch_cycle
+    physical: true
+    subsystem: home_assistant
+    target: switch.1_plug_shelly
+    final_state: "off"
+    wait_s: 2
+    observe_timeout_s: 4

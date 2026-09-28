@@ -266,21 +266,21 @@ td.mono, .mono { font-family: var(--mono); }
   .card-head, .topbar { flex-wrap: wrap; }
 }
 
-.control-grid, .control-actions, .home-actions {
+.control-grid, .control-actions, .home-actions, .mission-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem;
   align-items: end;
   margin: 0.6rem 0;
 }
-.control-grid label, .control-actions label, .home-actions label {
+.control-grid label, .control-actions label, .home-actions label, .mission-actions label {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
   color: var(--muted);
   font-size: 0.8rem;
 }
-.control-grid input, .control-actions select, .control-actions button, .home-actions input, .home-actions button, #ctrl-json, #ctrl-json-send {
+.control-grid input, .control-actions select, .control-actions button, .home-actions input, .home-actions button, .mission-actions button, #ctrl-json, #ctrl-json-send {
   font: inherit;
   color: var(--text);
   background: var(--panel-2);

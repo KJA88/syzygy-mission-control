@@ -224,7 +224,46 @@ def _home_from_config(root: Path):
     return HomeAssistant(policy, timeout=policy["timeout"])
 
 
-def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None):
+def _mission_health(snapshot_path: Path, hard_stale: float):
+    from missions.health import required_health
+
+    def health():
+        snap = read_snapshot_file(snapshot_path, utcnow(), hard_stale)
+        return required_health(snap)
+
+    return health
+
+
+def build_missions(state_dir: Path, home, hard_stale: float):
+    from missions.engine import open_engine
+
+    root = Path(__file__).resolve().parent.parent
+    try:
+        return open_engine(
+            root / "config" / "missions.yaml",
+            home,
+            _mission_health(state_dir / "snapshot.json", hard_stale),
+            state_dir / "mission-runs.json",
+        )
+    except Exception:
+        return None
+
+
+def _mission_post(missions, path, payload):
+    if missions is None:
+        return {"accepted": False, "reason": "MISSION_ENGINE_UNAVAILABLE"}
+    if not isinstance(payload, dict):
+        return {"accepted": False, "reason": "MALFORMED_PARAMETERS"}
+    if path == "/api/missions/stop":
+        if set(payload) - {"operator"}:
+            return {"accepted": False, "reason": "MALFORMED_PARAMETERS"}
+        return missions.stop()
+    if set(payload) - {"mission", "operator"}:
+        return {"accepted": False, "reason": "MALFORMED_PARAMETERS"}
+    return missions.start(payload.get("mission"), operator=payload.get("operator"))
+
+
+def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None, missions=None):
     snapshot_path = state_dir / "snapshot.json"
     events_path = state_dir / "events.jsonl"
 
@@ -281,6 +320,8 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                     payload.get("action"),
                     payload.get("brightness"),
                 ))
+            if parsed.path in ("/api/missions/start", "/api/missions/stop"):
+                return self._json(200, _mission_post(missions, parsed.path, payload))
             if owner is None:
                 return self._json(503, {"accepted": False, "result": "rejected", "reason": "CONTROL_OWNER_UNAVAILABLE"})
             if parsed.path == "/api/roarm/skills":
@@ -342,6 +383,27 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 if home is None:
                     return self._json(200, {"available": False, "reason": "HA_UNCONFIGURED", "ui_url": None, "counts": {}})
                 return self._json(200, home.status())
+            if path == "/api/missions":
+                return self._json(200, {
+                    "missions": [] if missions is None else missions.list_definitions(),
+                })
+            if path == "/api/missions/status":
+                if missions is None:
+                    return self._json(200, {
+                        "available": False,
+                        "reason": "MISSION_ENGINE_UNAVAILABLE",
+                        "state": "IDLE",
+                        "stop_requested": False,
+                        "active": None,
+                    })
+                return self._json(200, missions.status())
+            if path == "/api/missions/history":
+                try:
+                    limit = int(qs.get("limit", ["20"])[0])
+                except (TypeError, ValueError):
+                    limit = 20
+                rows = [] if missions is None else missions.history(limit)
+                return self._json(200, {"runs": rows})
             if path == "/api/devices":
                 cameras = []
                 if vision is not None:
@@ -382,12 +444,26 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                     return self._json(503, {"accepted": False, "reason": "CONTROL_OWNER_UNAVAILABLE"})
                 return self._json(200, owner.catalog())
             if path == "/api/health":
+                summary = {
+                    "available": False,
+                    "state": "IDLE",
+                    "reason": "MISSION_ENGINE_UNAVAILABLE",
+                    "active_run_id": None,
+                    "step": None,
+                    "stop_requested": False,
+                }
+                if missions is not None:
+                    try:
+                        summary = missions.health_summary()
+                    except Exception:
+                        summary["reason"] = "MISSION_ENGINE_UNAVAILABLE"
                 return self._json(200, {
                     "ok": True,
                     "role": "mission-control-ui",
                     "lan_only": True,
                     "state_dir": str(state_dir),
                     "hard_stale_s": hard_stale,
+                    "mission_engine": summary,
                 })
             if path == "/api/snapshot":
                 snap = read_snapshot_file(snapshot_path, utcnow(), hard_stale)
@@ -494,6 +570,7 @@ def main(argv=None):
     root = Path(__file__).resolve().parent.parent
     vision = _vision_from_config(root)
     home = _home_from_config(root)
+    missions = build_missions(state_dir, home, args.hard_stale_s)
     interval = 10.0
     try:
         from guardian.config import load_config
@@ -509,7 +586,7 @@ def main(argv=None):
             time.sleep(interval)
 
     threading.Thread(target=heartbeat_loop, name="control-owner-heartbeat", daemon=True).start()
-    handler = make_handler(state_dir, ui_dir, args.hard_stale_s, args.events_limit, owner, vision, home)
+    handler = make_handler(state_dir, ui_dir, args.hard_stale_s, args.events_limit, owner, vision, home, missions)
     httpd = ThreadingHTTPServer((args.host, args.port), handler)
     sys.stderr.write(
         "SYZYGY Mission Control V0.1 listening on http://%s:%d/\n"
