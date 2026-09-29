@@ -54,7 +54,10 @@ class PwaTests(unittest.TestCase):
         self.assertIn("syzygy-shell-v1", text)
         self.assertNotIn("localStorage", text)
         self.assertNotIn("HA_TOKEN", text)
-        self.assertIn('rel="manifest"', page)
+        self.assertIn(
+            '<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />',
+            page,
+        )
         self.assertIn('navigator.serviceWorker.register("/sw.js")', script)
         self.assertIn('typeof navigator !== "undefined"', script)
 
