@@ -323,6 +323,23 @@ def _workout_summary(workouts, qs):
         return 200, _workout_offline()
 
 
+def relay_stream(destination, upstream, chunk_size=8192):
+    """Copy an upstream MJPEG body in chunks and close it when the client stops."""
+    try:
+        while True:
+            chunk = upstream.read(chunk_size)
+            if not chunk:
+                return
+            destination.write(chunk)
+            flush = getattr(destination, "flush", None)
+            if callable(flush):
+                flush()
+    finally:
+        closer = getattr(upstream, "close", None)
+        if callable(closer):
+            closer()
+
+
 def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None, missions=None, workouts=None):
     snapshot_path = state_dir / "snapshot.json"
     events_path = state_dir / "events.jsonl"
@@ -491,6 +508,30 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                         from home.adapter import devices_from_entities
                         devices.extend(devices_from_entities(view.get("entities") or []))
                 return self._json(200, {"devices": devices})
+            if path.startswith("/api/perception/stream/"):
+                camera_id = path[len("/api/perception/stream/"):]
+                if not camera_id or "/" in camera_id:
+                    return self._json(404, {"accepted": False, "reason": "UNKNOWN_CAMERA"})
+                if vision is None:
+                    return self._json(503, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
+                upstream, reason = vision.open_stream(camera_id)
+                if upstream is None:
+                    code = 404 if reason == "UNKNOWN_CAMERA" else 400 if reason == "CAPABILITY_UNAVAILABLE" else 503
+                    return self._json(code, {"accepted": False, "reason": reason})
+                headers = getattr(upstream, "headers", None)
+                content_type = ""
+                if headers is not None and callable(getattr(headers, "get", None)):
+                    content_type = headers.get("Content-Type") or ""
+                self.send_response(200)
+                self.send_header("Content-Type", content_type or "multipart/x-mixed-replace")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                try:
+                    relay_stream(self.wfile, upstream)
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError):
+                    pass
+                return
             if path.startswith("/api/perception/snapshot/"):
                 if vision is None:
                     return self._json(503, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})

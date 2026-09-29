@@ -84,13 +84,22 @@ def _safe_media_path(value):
     return text
 
 
+def public_stream_url(camera_id):
+    """Browser stream route. The Jetson stream origin stays on the server."""
+    return "/api/perception/stream/" + camera_id
+
+
 def normalize_cameras(config, status, events, *, service_base, hub_ui, metadata=None):
-    """Return operator cameras. Secret fields are dropped."""
+    """Return operator cameras. Secret fields and Jetson origins are dropped.
+
+    service_base and hub_ui stay available to the server-side adapter. The
+    browser receives only the Mission Control stream route.
+    """
+    del service_base, hub_ui
     if not isinstance(config, dict) or not isinstance(config.get("cameras"), dict):
-        return {"available": False, "reason": "VISION_HUB_UNAVAILABLE", "cameras": [], "hub_url": hub_ui}
+        return {"available": False, "reason": "VISION_HUB_UNAVAILABLE", "cameras": [], "hub_url": None}
     status = status if isinstance(status, dict) else {}
     metadata = metadata if isinstance(metadata, dict) else {}
-    service = str(service_base or "").rstrip("/")
     cameras = []
     for camera_id, raw in config["cameras"].items():
         ident = safe_camera_id(camera_id)
@@ -118,11 +127,11 @@ def normalize_cameras(config, status, events, *, service_base, hub_ui, metadata=
             "mode": mode,
             "capabilities": caps,
             "tracking": raw.get("tracking") is True if "track" in caps else None,
-            "stream_url": service + "/stream/" + ident if service else None,
-            "hub_url": hub_ui,
+            "stream_url": public_stream_url(ident),
+            "hub_url": None,
             "last_event": _last_event(events, ident),
         })
-    return {"available": True, "reason": None, "cameras": cameras, "hub_url": hub_ui}
+    return {"available": True, "reason": None, "cameras": cameras, "hub_url": None}
 
 
 def devices_from(cameras, roarm=None):
@@ -238,10 +247,10 @@ class VisionHub:
 
     def camera_view(self):
         if not self.hub_base:
-            return {"available": False, "reason": "VISION_HUB_UNAVAILABLE", "cameras": [], "hub_url": self.hub_ui}
+            return {"available": False, "reason": "VISION_HUB_UNAVAILABLE", "cameras": [], "hub_url": None}
         config, error = self._json(self.hub_base + "/api/config")
         if error:
-            return {"available": False, "reason": error, "cameras": [], "hub_url": self.hub_ui}
+            return {"available": False, "reason": error, "cameras": [], "hub_url": None}
         self._remember_cameras(config)
         status, _status_error = self._json(self.hub_base + "/api/cameras/status")
         events, _event_error = self._json(self.hub_base + "/api/events?limit=50")
@@ -369,3 +378,30 @@ class VisionHub:
         if body.startswith(b"\xff\xd8") or "jpeg" in header.lower() or "image" in header.lower():
             return body, None
         return None, "SNAPSHOT_UNAVAILABLE"
+
+    def open_stream(self, camera_id):
+        """Return the upstream MJPEG response without reading its body."""
+        camera, reason = self._known_camera(camera_id)
+        if camera is None:
+            return None, reason
+        if "stream" not in camera["capabilities"]:
+            return None, "CAPABILITY_UNAVAILABLE"
+        if not self.service_base:
+            return None, "VISION_HUB_UNAVAILABLE"
+        request = urllib.request.Request(self.service_base + "/stream/" + camera["id"])
+        try:
+            response = self.opener(request, timeout=self.timeout)
+        except urllib.error.HTTPError as exc:
+            closer = getattr(exc, "close", None)
+            if callable(closer):
+                closer()
+            return None, "VISION_HUB_UNAVAILABLE"
+        except Exception:
+            return None, "VISION_HUB_UNAVAILABLE"
+        status = getattr(response, "status", 200)
+        if status is None or status >= 400:
+            closer = getattr(response, "close", None)
+            if callable(closer):
+                closer()
+            return None, "VISION_HUB_UNAVAILABLE"
+        return response, None
