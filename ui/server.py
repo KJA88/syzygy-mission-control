@@ -323,7 +323,51 @@ def _workout_summary(workouts, qs):
         return 200, _workout_offline()
 
 
-def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None, missions=None, workouts=None):
+def _health_from_env():
+    try:
+        from health.fitbit import open_health
+        return open_health()
+    except Exception:
+        return None
+
+
+def _health_offline():
+    return {"available": False, "reason": "FITBIT_UNAVAILABLE", "source": "fitbit", "metrics": []}
+
+
+def _health_days(qs, allowed):
+    if set(qs) - {"days"}:
+        return None
+    if "days" not in qs:
+        return allowed
+    if qs.get("days") != [str(allowed)]:
+        return None
+    return allowed
+
+
+def _health_today(health, qs):
+    if qs:
+        return 400, {"available": False, "reason": "MALFORMED_PARAMETERS", "source": "fitbit", "metrics": []}
+    if health is None:
+        return 200, _health_offline()
+    try:
+        return 200, health.today()
+    except Exception:
+        return 200, _health_offline()
+
+
+def _health_range(health, qs, allowed, method):
+    if _health_days(qs, allowed) is None:
+        return 400, {"available": False, "reason": "MALFORMED_PARAMETERS", "source": "fitbit", "metrics": []}
+    if health is None:
+        return 200, _health_offline()
+    try:
+        return 200, method()
+    except Exception:
+        return 200, _health_offline()
+
+
+def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None, missions=None, workouts=None, health=None):
     snapshot_path = state_dir / "snapshot.json"
     events_path = state_dir / "events.jsonl"
 
@@ -382,7 +426,7 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 ))
             if parsed.path in ("/api/missions/start", "/api/missions/stop"):
                 return self._json(200, _mission_post(missions, parsed.path, payload))
-            if parsed.path.startswith("/api/workouts/"):
+            if parsed.path.startswith("/api/workouts/") or parsed.path.startswith("/api/health/"):
                 return self._json(405, {"available": False, "reason": "READ_ONLY", "source": "fitbit"})
             if owner is None:
                 return self._json(503, {"accepted": False, "result": "rejected", "reason": "CONTROL_OWNER_UNAVAILABLE"})
@@ -471,6 +515,15 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 return self._json(code, payload)
             if path == "/api/workouts/summary":
                 code, payload = _workout_summary(workouts, qs)
+                return self._json(code, payload)
+            if path == "/api/health/today":
+                code, payload = _health_today(health, qs)
+                return self._json(code, payload)
+            if path == "/api/health/summary":
+                code, payload = _health_range(health, qs, 7, health.summary if health is not None else lambda: _health_offline())
+                return self._json(code, payload)
+            if path == "/api/health/trends":
+                code, payload = _health_range(health, qs, 30, health.trends if health is not None else lambda: _health_offline())
                 return self._json(code, payload)
             if path == "/api/devices":
                 cameras = []
@@ -652,7 +705,7 @@ def main(argv=None):
     threading.Thread(target=heartbeat_loop, name="control-owner-heartbeat", daemon=True).start()
     handler = make_handler(
         state_dir, ui_dir, args.hard_stale_s, args.events_limit,
-        owner, vision, home, missions, _workouts_from_env(),
+        owner, vision, home, missions, _workouts_from_env(), _health_from_env(),
     )
     httpd = ThreadingHTTPServer((args.host, args.port), handler)
     sys.stderr.write(

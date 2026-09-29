@@ -29,6 +29,7 @@
       <button type="button" class="nav-button" data-view="home">Home</button>
       <button type="button" class="nav-button" data-view="missions">Missions</button>
       <button type="button" class="nav-button" data-view="training">Training</button>
+      <button type="button" class="nav-button" data-view="health">Health</button>
       <button type="button" class="nav-button" data-view="events">Events</button>
       <button type="button" class="nav-button" data-view="system">System</button>
       <button type="button" class="nav-button" data-view="settings">Settings</button>
@@ -53,6 +54,7 @@
           <article class="card"><h2>Home</h2><p id="overview-home">Waiting for Home Assistant</p></article>
           <article class="card"><h2>Missions</h2><p id="overview-missions">Waiting for Mission Engine</p></article>
           <article class="card"><h2>Training</h2><p id="overview-training">Waiting for Fitbit</p></article>
+          <article class="card"><h2>Health</h2><p id="overview-health">Waiting for Fitbit</p></article>
           <article class="card"><h2>Robots</h2><p id="overview-robots">Waiting for RoArm</p></article>
           <article class="card"><h2>Activity</h2><p id="overview-activity">No events yet</p></article>
         </div>
@@ -186,6 +188,24 @@
         <div id="training-latest" class="cards-grid"></div>
         <h2>Recent workouts</h2>
         <div id="training-recent" class="cards-grid"></div>
+      </section>
+
+      <section id="view-health" class="view">
+        <div class="section-head">
+          <h1>Health</h1>
+          <p id="health-status" class="hint">Waiting for Fitbit</p>
+        </div>
+        <p class="hint">Read-only Fitbit summaries. Fitbit HRV is the nightly Fitbit series, not Polar H10 morning HRV. Private to this cockpit.</p>
+        <h2>Today</h2>
+        <div id="health-today" class="cards-grid"></div>
+        <h2>Recovery</h2>
+        <div id="health-recovery" class="cards-grid"></div>
+        <h2>Trends</h2>
+        <div id="health-trends" class="cards-grid"></div>
+        <h2>Watchlist</h2>
+        <div id="health-watchlist" class="stack"></div>
+        <h2>Source and freshness</h2>
+        <div id="health-freshness" class="cards-row"></div>
       </section>
 
       <section id="view-events" class="view">

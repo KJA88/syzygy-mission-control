@@ -68,6 +68,12 @@ class PwaTests(unittest.TestCase):
         self.assertIn("refreshWorkouts();", script)
         self.assertIn("setInterval(refreshWorkouts, WORKOUT_REFRESH_MS);", script)
         self.assertNotIn("await refreshWorkouts()", script)
+        self.assertNotIn("refreshHealth", tick_body)
+        self.assertIn("const HEALTH_REFRESH_MS = 10 * 60 * 1000;", script)
+        self.assertIn('fetch("/api/health/today", { cache: "no-store" })', script)
+        self.assertIn('fetch("/api/health/summary?days=7", { cache: "no-store" })', script)
+        self.assertIn('fetch("/api/health/trends?days=30", { cache: "no-store" })', script)
+        self.assertIn("setInterval(refreshHealth, HEALTH_REFRESH_MS);", script)
 
     def test_static_pwa_assets_use_explicit_types(self):
         server = _server()

@@ -278,13 +278,14 @@ def urllib_transport(url, payload, headers, timeout_s):
 class FitbitMcp:
     """Stateless JSON-RPC client for the loopback Fitbit MCP only."""
 
-    def __init__(self, url=DEFAULT_URL, transport=urllib_transport, timeout_s=8.0):
+    def __init__(self, url=DEFAULT_URL, transport=urllib_transport, timeout_s=8.0, allowed_tools=None):
         self.url = _loopback_mcp_url(url)
         self.transport = transport
         self.timeout_s = timeout_s
+        self.allowed_tools = ALLOWED_TOOLS if allowed_tools is None else frozenset(allowed_tools)
 
     def call_tool(self, name, arguments):
-        if name not in ALLOWED_TOOLS or not isinstance(arguments, dict):
+        if name not in self.allowed_tools or not isinstance(arguments, dict):
             raise FitbitUnavailable()
         headers = {
             "Content-Type": "application/json",

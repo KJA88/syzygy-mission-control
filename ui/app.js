@@ -6,6 +6,7 @@
 
   const REFRESH_MS = 7000;
   const WORKOUT_REFRESH_MS = 10 * 60 * 1000;
+  const HEALTH_REFRESH_MS = 10 * 60 * 1000;
   const ACTIVITY_LIMIT = 20;
   const TZ = "America/Los_Angeles";
 
@@ -1297,6 +1298,109 @@
     }
   }
 
+  function healthValue(metric) {
+    if (!metric || metric.value == null) return "—";
+    if (Array.isArray(metric.value)) {
+      return metric.value.map(function (item) {
+        if (!item) return "";
+        if (item.zone) return item.zone + " " + plainNum(item.duration_seconds) + "s";
+        if (item.type) return item.type + " " + plainNum(item.min_bpm) + "-" + plainNum(item.max_bpm);
+        return "";
+      }).filter(Boolean).join(" · ") || "—";
+    }
+    return plainNum(metric.value) + (metric.unit ? " " + metric.unit : "");
+  }
+
+  function healthCard(metric) {
+    return '<article class="card"><h2>' + esc(metric.name) + "</h2>" +
+      "<p>" + esc(healthValue(metric)) + "</p>" +
+      "<p>" + esc(metric.source || "fitbit") + " · " + esc(metric.freshness || "missing") + "</p>" +
+      "<p>Date " + esc(metric.date || "—") + "</p>" +
+      "<p>Tool " + esc(metric.tool || "—") + "</p></article>";
+  }
+
+  function renderHealth(today, summary, trends) {
+    const todayNode = document.getElementById("health-today");
+    const recoveryNode = document.getElementById("health-recovery");
+    const trendsNode = document.getElementById("health-trends");
+    const watchNode = document.getElementById("health-watchlist");
+    const freshNode = document.getElementById("health-freshness");
+    const online = today && today.available === true;
+    const metrics = online && Array.isArray(today.metrics) ? today.metrics : [];
+    if (!online) {
+      setText("health-status", "Health UNKNOWN / OFFLINE");
+      setText("overview-health", "UNKNOWN / OFFLINE");
+    } else {
+      setText("health-status", "Fitbit read-only · " + (today.date || "date unavailable"));
+      const hrv = metrics.filter(function (item) { return item.name === "average_hrv_ms"; })[0];
+      setText("overview-health", hrv && hrv.value != null ? "Fitbit HRV " + hrv.value + " ms" : "Fitbit connected");
+    }
+    if (todayNode) {
+      todayNode.innerHTML = metrics.length
+        ? metrics.map(healthCard).join("")
+        : '<p class="hint">No health metrics.</p>';
+    }
+    const recovery = today && today.recovery;
+    if (recoveryNode) {
+      const rows = recovery && Array.isArray(recovery.metrics) ? recovery.metrics : [];
+      recoveryNode.innerHTML = '<article class="card"><h2>Fitbit recovery context</h2><p>' +
+        esc(recovery && recovery.note ? recovery.note : "Fitbit HRV is the Fitbit nightly series, not Polar H10 morning HRV.") +
+        "</p></article>" + rows.map(healthCard).join("");
+    }
+    if (trendsNode) {
+      const series = trends && trends.available === true ? trends.series || {} : null;
+      const summarySeries = summary && summary.available === true ? summary.series || {} : {};
+      if (!series) {
+        trendsNode.innerHTML = '<article class="card"><h2>30-day trends</h2><p>Unavailable</p></article>';
+      } else {
+        trendsNode.innerHTML = Object.keys(series).map(function (name) {
+          const item = series[name] || {};
+          const week = summarySeries[name] || {};
+          const latest = item.latest || {};
+          const total = week.total != null ? " · 7-day total " + week.total : "";
+          return '<article class="card"><h2>' + esc(name) + "</h2>" +
+            "<p>Latest " + esc(latest.value != null ? String(latest.value) : "—") + " " + esc(item.unit || "") + "</p>" +
+            "<p>" + esc(item.sample_count || 0) + " days in 30" + esc(total) + "</p>" +
+            "<p>" + esc(item.source || "fitbit") + "</p></article>";
+        }).join("");
+      }
+    }
+    if (watchNode) {
+      const items = today && Array.isArray(today.watchlist) ? today.watchlist : [];
+      watchNode.innerHTML = items.length
+        ? items.map(function (item) {
+          return "<p>" + esc(item.name) + " · " + esc(item.reason) + " · " + esc(item.date || "—") + "</p>";
+        }).join("")
+        : '<p class="hint">No missing Fitbit metrics.</p>';
+    }
+    if (freshNode) {
+      const tools = today && today.freshness && today.freshness.tools ? today.freshness.tools : {};
+      const names = Object.keys(tools);
+      freshNode.innerHTML = '<article class="card"><h2>Fitbit MCP</h2><p>Source ' +
+        esc(today && today.source ? today.source : "fitbit") + "</p><p>Generated " +
+        esc(today && today.generated_at ? today.generated_at : "—") + "</p><p>" +
+        esc(names.length ? names.map(function (name) { return name + " " + tools[name]; }).join(" · ") : "No tool status") +
+        "</p></article>";
+    }
+  }
+
+  async function refreshHealth() {
+    try {
+      const responses = await Promise.all([
+        fetch("/api/health/today", { cache: "no-store" }),
+        fetch("/api/health/summary?days=7", { cache: "no-store" }),
+        fetch("/api/health/trends?days=30", { cache: "no-store" }),
+      ]);
+      const today = responses[0].ok ? await responses[0].json() : null;
+      const summary = responses[1].ok ? await responses[1].json() : null;
+      const trends = responses[2].ok ? await responses[2].json() : null;
+      renderHealth(today, summary, trends);
+    } catch (err) {
+      setText("health-status", "Health UNKNOWN / OFFLINE");
+      setText("overview-health", "UNKNOWN / OFFLINE");
+    }
+  }
+
   function showView(name) {
     if (!document.querySelectorAll) return;
     document.querySelectorAll(".view").forEach(function (view) {
@@ -1378,6 +1482,8 @@
   setInterval(tick, REFRESH_MS);
   refreshWorkouts();
   setInterval(refreshWorkouts, WORKOUT_REFRESH_MS);
+  refreshHealth();
+  setInterval(refreshHealth, HEALTH_REFRESH_MS);
   if (typeof navigator !== "undefined" && navigator.serviceWorker && navigator.serviceWorker.register) {
     navigator.serviceWorker.register("/sw.js").catch(function () {});
   }

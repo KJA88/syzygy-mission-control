@@ -160,3 +160,40 @@ test('training view shows synthetic workout fields from the network', async () =
   assert.match(el['training-summary'].innerHTML, /FAT_BURN 120 s/);
   assert.doesNotMatch(el['training-latest'].innerHTML, /max_heart_rate|additional_metrics|Authorization/);
 });
+
+test('health view shows synthetic Fitbit metrics and labels HRV as Fitbit', async () => {
+  const el = await render(snapshot(), false, {
+    '/api/health/today': {
+      available: true, source: 'fitbit', date: '2020-01-08', generated_at: '2020-01-08T12:00:00-08:00',
+      metrics: [{
+        source: 'fitbit', name: 'average_hrv_ms', value: 42, unit: 'ms', date: '2020-01-08',
+        tool: 'get_fitbit_hrv', freshness: 'present',
+      }],
+      recovery: {
+        source: 'fitbit', series: 'fitbit_nightly_hrv',
+        note: 'Fitbit HRV is the Fitbit nightly series, not Polar H10 morning HRV.',
+        metrics: [{
+          source: 'fitbit', name: 'average_hrv_ms', value: 42, unit: 'ms', date: '2020-01-08',
+          tool: 'get_fitbit_hrv', freshness: 'present',
+        }],
+      },
+      watchlist: [{source: 'fitbit', name: 'weight_pounds', reason: 'MISSING', date: null, tool: 'get_fitbit_weight'}],
+      freshness: {source: 'fitbit', tools: {get_fitbit_hrv: 'ok', get_fitbit_weight: 'unavailable'}},
+    },
+    '/api/health/summary?days=7': {
+      available: true, source: 'fitbit', series: {average_hrv_ms: {total: null, sample_count: 3}},
+    },
+    '/api/health/trends?days=30': {
+      available: true, source: 'fitbit',
+      series: {average_hrv_ms: {source: 'fitbit', unit: 'ms', sample_count: 10, latest: {value: 42}, total: null}},
+    },
+  });
+  assert.equal(el['health-status'].textContent, 'Fitbit read-only · 2020-01-08');
+  assert.match(el['health-recovery'].innerHTML, /Fitbit nightly series/);
+  assert.match(el['health-today'].innerHTML, /average_hrv_ms/);
+  assert.match(el['health-today'].innerHTML, /42 ms/);
+  assert.match(el['health-watchlist'].innerHTML, /weight_pounds · MISSING/);
+  assert.match(el['health-trends'].innerHTML, /10 days in 30/);
+  assert.doesNotMatch(el['health-today'].innerHTML, /Polar H10/);
+  assert.doesNotMatch(el['health-today'].innerHTML, /Authorization/);
+});
