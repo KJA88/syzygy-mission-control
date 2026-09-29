@@ -3,7 +3,8 @@
 
 Serves static UI assets and Guardian outputs (snapshot.json + events.jsonl).
 Named skill requests and the engineering JSON path are served on this same
-server. Does NOT probe MCP, hosts, or any remote service.
+server. Does not probe Guardian MCP catalogs. Read-only workout summaries may
+call the local Fitbit MCP at 127.0.0.1:8010 and do not receive OAuth tokens.
 
 The origin stays on the Pi. A phone may reach only this UI through the
 dedicated Cloudflare Access hostname and tunnel. Do not publish port 9070
@@ -280,7 +281,49 @@ def _mission_post(missions, path, payload):
     return missions.start(payload.get("mission"), operator=payload.get("operator"))
 
 
-def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None, missions=None):
+def _workouts_from_env():
+    try:
+        from workouts.fitbit import open_fitbit
+        return open_fitbit()
+    except Exception:
+        return None
+
+
+def _workout_offline():
+    return {"available": False, "reason": "FITBIT_UNAVAILABLE", "source": "fitbit", "workouts": []}
+
+
+def _workout_recent(workouts, qs):
+    if set(qs) - {"limit"}:
+        return 400, {"available": False, "reason": "MALFORMED_PARAMETERS", "source": "fitbit", "workouts": []}
+    raw = (qs.get("limit") or ["8"])[0]
+    try:
+        limit = int(raw)
+    except (TypeError, ValueError):
+        return 400, {"available": False, "reason": "MALFORMED_PARAMETERS", "source": "fitbit", "workouts": []}
+    limit = max(1, min(limit, 20))
+    if workouts is None:
+        return 200, _workout_offline()
+    try:
+        return 200, workouts.recent(limit)
+    except Exception:
+        return 200, _workout_offline()
+
+
+def _workout_summary(workouts, qs):
+    if set(qs) - {"days"}:
+        return 400, {"available": False, "reason": "MALFORMED_PARAMETERS", "source": "fitbit", "workouts": []}
+    if "days" in qs and qs.get("days") != ["7"]:
+        return 400, {"available": False, "reason": "MALFORMED_PARAMETERS", "source": "fitbit", "workouts": []}
+    if workouts is None:
+        return 200, _workout_offline()
+    try:
+        return 200, workouts.summary()
+    except Exception:
+        return 200, _workout_offline()
+
+
+def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None, missions=None, workouts=None):
     snapshot_path = state_dir / "snapshot.json"
     events_path = state_dir / "events.jsonl"
 
@@ -339,6 +382,8 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 ))
             if parsed.path in ("/api/missions/start", "/api/missions/stop"):
                 return self._json(200, _mission_post(missions, parsed.path, payload))
+            if parsed.path.startswith("/api/workouts/"):
+                return self._json(405, {"available": False, "reason": "READ_ONLY", "source": "fitbit"})
             if owner is None:
                 return self._json(503, {"accepted": False, "result": "rejected", "reason": "CONTROL_OWNER_UNAVAILABLE"})
             if parsed.path == "/api/roarm/skills":
@@ -421,6 +466,12 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                     limit = 20
                 rows = [] if missions is None else missions.history(limit)
                 return self._json(200, {"runs": rows})
+            if path == "/api/workouts/recent":
+                code, payload = _workout_recent(workouts, qs)
+                return self._json(code, payload)
+            if path == "/api/workouts/summary":
+                code, payload = _workout_summary(workouts, qs)
+                return self._json(code, payload)
             if path == "/api/devices":
                 cameras = []
                 if vision is not None:
@@ -599,7 +650,10 @@ def main(argv=None):
             time.sleep(interval)
 
     threading.Thread(target=heartbeat_loop, name="control-owner-heartbeat", daemon=True).start()
-    handler = make_handler(state_dir, ui_dir, args.hard_stale_s, args.events_limit, owner, vision, home, missions)
+    handler = make_handler(
+        state_dir, ui_dir, args.hard_stale_s, args.events_limit,
+        owner, vision, home, missions, _workouts_from_env(),
+    )
     httpd = ThreadingHTTPServer((args.host, args.port), handler)
     sys.stderr.write(
         "SYZYGY Mission Control V0.1 listening on http://%s:%d/\n"

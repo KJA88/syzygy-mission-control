@@ -60,6 +60,10 @@ class PwaTests(unittest.TestCase):
         )
         self.assertIn('navigator.serviceWorker.register("/sw.js")', script)
         self.assertIn('typeof navigator !== "undefined"', script)
+        self.assertIn('fetch("/api/workouts/recent?limit=8", { cache: "no-store" })', script)
+        self.assertIn('fetch("/api/workouts/summary?days=7", { cache: "no-store" })', script)
+        self.assertIn("refreshWorkouts();", script)
+        self.assertNotIn("await refreshWorkouts()", script)
 
     def test_static_pwa_assets_use_explicit_types(self):
         server = _server()

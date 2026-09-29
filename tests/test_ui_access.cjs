@@ -13,7 +13,7 @@ function snapshot() {
     auth: ids.map(id => ({id, status: 'green', required: false, class: null, duration_ms: 1250}))};
 }
 
-async function render(snap, fail = false) {
+async function render(snap, fail = false, extra = null) {
   const elements = {}, requests = [];
   const context = {Date, Intl, Map, Number, String, Object, Array, Promise,
     document: {getElementById(id) {
@@ -22,6 +22,9 @@ async function render(snap, fail = false) {
     fetch: async url => {
       requests.push(url);
       if (fail) throw new Error('offline');
+      if (extra && Object.prototype.hasOwnProperty.call(extra, url)) {
+        return {ok: true, json: async () => extra[url]};
+      }
       return {ok: true, json: async () => url === '/api/snapshot' ? snap : {events: []}};
     }, setInterval() {},
   };
@@ -119,4 +122,41 @@ test('stale Guardian heartbeat overrides previously green RoArm state', async ()
   assert.match(el.roarm.innerHTML, /status-chip UNKNOWN/);
   assert.match(el.roarm.innerHTML, /SNAPSHOT_STALE · T105 stale/);
   assert.doesNotMatch(el.roarm.innerHTML, /status-chip GREEN/);
+});
+
+test('training view shows synthetic workout fields from the network', async () => {
+  const recentUrl = '/api/workouts/recent?limit=8';
+  const summaryUrl = '/api/workouts/summary?days=7';
+  const workout = {
+    source: 'fitbit', name: 'Sample Walk', exercise_type: 'WALKING',
+    start: '2020-01-02T15:00:00-08:00', end: '2020-01-02T15:30:00-08:00',
+    duration_minutes: 30, calories: 100, steps: 3000, distance_miles: 1.5,
+    average_heart_rate_bpm: 110, active_zone_minutes: 12,
+    heart_rate_zones: {light_minutes: 10, moderate_minutes: 8, vigorous_minutes: 2, peak_minutes: 0},
+    average_pace_minutes_per_mile: 13.41, has_gps: false,
+    device: 'Sample Tracker', platform: 'FITBIT', recording_method: 'AUTOMATIC',
+  };
+  const el = await render(snapshot(), false, {
+    [recentUrl]: {available: true, source: 'fitbit', workouts: [workout]},
+    [summaryUrl]: {
+      available: true, source: 'fitbit', workout_count: 1,
+      start_date: '2020-01-02', end_date: '2020-01-08',
+      totals: {
+        duration_minutes: 30, calories: 100, distance_miles: 1.5, steps: 3000,
+        active_zone_minutes: 12,
+        heart_rate_zones: workout.heart_rate_zones,
+      },
+      daily_active_zone_minutes: {
+        available: true,
+        totals: {active_zone_minutes: 20, fat_burn_zone_minutes: 10, cardio_zone_minutes: 8, peak_zone_minutes: 2},
+      },
+      daily_time_in_heart_rate_zone: {available: true, duration_seconds: {FAT_BURN: 120}},
+    },
+  });
+  assert.equal(el['training-status'].textContent, 'Fitbit read-only · 1 recent');
+  assert.match(el['training-latest'].innerHTML, /Sample Walk/);
+  assert.match(el['training-latest'].innerHTML, /3000/);
+  assert.match(el['training-summary'].innerHTML, /fat burn 10/);
+  assert.match(el['training-summary'].innerHTML, /FAT_BURN 120 s/);
+  assert.doesNotMatch(el['training-latest'].innerHTML, /max_heart_rate|additional_metrics|Authorization/);
 });

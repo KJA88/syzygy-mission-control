@@ -28,6 +28,7 @@
       <button type="button" class="nav-button" data-view="devices">Devices</button>
       <button type="button" class="nav-button" data-view="home">Home</button>
       <button type="button" class="nav-button" data-view="missions">Missions</button>
+      <button type="button" class="nav-button" data-view="training">Training</button>
       <button type="button" class="nav-button" data-view="events">Events</button>
       <button type="button" class="nav-button" data-view="system">System</button>
       <button type="button" class="nav-button" data-view="settings">Settings</button>
@@ -51,6 +52,7 @@
           <article class="card"><h2>Perception</h2><p id="overview-perception">Waiting for Vision Hub</p></article>
           <article class="card"><h2>Home</h2><p id="overview-home">Waiting for Home Assistant</p></article>
           <article class="card"><h2>Missions</h2><p id="overview-missions">Waiting for Mission Engine</p></article>
+          <article class="card"><h2>Training</h2><p id="overview-training">Waiting for Fitbit</p></article>
           <article class="card"><h2>Robots</h2><p id="overview-robots">Waiting for RoArm</p></article>
           <article class="card"><h2>Activity</h2><p id="overview-activity">No events yet</p></article>
         </div>
@@ -170,6 +172,20 @@
         <div id="mission-list" class="cards-grid"></div>
         <h2>Recent runs</h2>
         <div id="mission-history" class="stack"></div>
+      </section>
+
+      <section id="view-training" class="view">
+        <div class="section-head">
+          <h1>Training</h1>
+          <p id="training-status" class="hint">Waiting for Fitbit</p>
+        </div>
+        <p class="hint">Read-only workout summaries from the local Fitbit service. Private to this cockpit.</p>
+        <h2>Last 7 days</h2>
+        <div id="training-summary" class="cards-row"></div>
+        <h2>Latest workout</h2>
+        <div id="training-latest" class="cards-grid"></div>
+        <h2>Recent workouts</h2>
+        <div id="training-recent" class="cards-grid"></div>
       </section>
 
       <section id="view-events" class="view">
