@@ -57,31 +57,8 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 
-sudo tee /etc/systemd/system/syzygy-mission-control.service >/dev/null <<EOF
-[Unit]
-Description=SYZYGY Mission Control V0.1 (LAN read-only UI)
-After=network-online.target syzygy-guardian.service
-Wants=network-online.target syzygy-guardian.service
-
-[Service]
-Type=simple
-User=$account
-WorkingDirectory=$root
-Environment=MC_HOST=0.0.0.0
-Environment=MC_PORT=9070
-Environment=MC_STATE_DIR=$root/state
-Environment=MC_UI_DIR=$root/ui
-Environment=MC_HARD_STALE_S=120
-ExecStart=$root/scripts/run-mission-control.sh
-Restart=on-failure
-RestartSec=5
-NoNewPrivileges=true
-ProtectSystem=strict
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-EOF
+# The checked-in unit is authoritative, including the Home Assistant EnvironmentFile.
+sudo cp "$root/systemd/syzygy-mission-control.service" /etc/systemd/system/syzygy-mission-control.service
 fi
 sudo systemctl daemon-reload
 sudo systemctl enable --now syzygy-agent.service

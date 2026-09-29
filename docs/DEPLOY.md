@@ -54,7 +54,7 @@ The Pi installer installs/restarts the Pi agent, Guardian, and Mission Control s
 
 Do not publish ports `9070` or `9071` directly, and do not put Home Assistant, RoArm, Vision Hub, MQTT, or MCP ports on the Mission Control hostname. Remote Mission Control is only `https://mission.syzygylab.net` via Cloudflare Access and the Pi `cloudflared.service` tunnel to `http://127.0.0.1:9070`. That unit is separate from the `cloudflared-*-mcp.service` connectors.
 
-`scripts/install.sh` rewrites `syzygy-mission-control.service` without the Home Assistant `EnvironmentFile` that `systemd/syzygy-mission-control.service` contains. Do not run the installer over a production unit until that difference is checked. The unit description text may still say "V0.1 LAN read-only"; that string is not the capability boundary.
+On the Pi, `scripts/install.sh` installs the checked-in `systemd/syzygy-mission-control.service`, including its Home Assistant `EnvironmentFile`. It does not write a second Mission Control unit. The unit description text may still say "V0.1 LAN read-only"; that string is not the capability boundary.
 
 ## Phase 1 health policy
 
