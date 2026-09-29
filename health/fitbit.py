@@ -62,6 +62,13 @@ HEALTH_TOOLS = frozenset({
 
 SUMMARY_DAYS = 7
 TREND_DAYS = 30
+PINNED = (
+    ("average_hrv_ms", "HRV"),
+    ("resting_heart_rate_bpm", "Resting HR"),
+    ("minutes_asleep", "Sleep"),
+    ("weight_pounds", "Weight"),
+    ("steps", "Activity"),
+)
 ADDITIVE = frozenset({
     "steps",
     "distance_miles",
@@ -315,18 +322,27 @@ class HealthSource:
             _fresh(tools["get_fitbit_heart_rate_zones"], zone_row.get("zones") if zone_row else None, zone_row.get("date") if zone_row else None, today),
         ))
         present = any(item["freshness"] == "present" for item in metrics)
+        available = present or any(status == "ok" for status in tools.values())
+        generated_at = self._zone_now().isoformat(timespec="seconds")
         return {
-            "available": present or any(status == "ok" for status in tools.values()),
-            "reason": None if present or any(status == "ok" for status in tools.values()) else "FITBIT_UNAVAILABLE",
+            "available": available,
+            "reason": None if available else "FITBIT_UNAVAILABLE",
             "source": SOURCE,
             "timezone": TIMEZONE,
             "date": today,
-            "generated_at": self._zone_now().isoformat(timespec="seconds"),
+            "generated_at": generated_at,
             "metrics": metrics,
             "sleep": sleep,
-            "recovery": _recovery(metrics),
+            "recovery": _recovery(metrics, sleep),
             "watchlist": _watchlist(metrics),
-            "freshness": {"source": SOURCE, "tools": tools},
+            "freshness": {
+                "source": SOURCE,
+                "status": "online" if available else "offline",
+                "refreshed_at": generated_at if available else None,
+                "tools": tools,
+                "unavailable": [name for name, status in tools.items() if status != "ok"],
+                "missing": [item["name"] for item in metrics if item.get("freshness") == "missing"],
+            },
         }
 
     def _latest_metrics(self, today, tools):
@@ -547,7 +563,7 @@ def _zone_record(record):
     return {"date": iso_date(record.get("date")), "zones": _zone_bounds(record)}
 
 
-def _recovery(metrics):
+def _recovery(metrics, sleep):
     names = {
         "minutes_asleep",
         "resting_heart_rate_bpm",
@@ -560,28 +576,27 @@ def _recovery(metrics):
         "source": SOURCE,
         "series": "fitbit_nightly_hrv",
         "note": "Fitbit HRV is the Fitbit nightly series, not Polar H10 morning HRV.",
+        "sleep": sleep,
         "metrics": [item for item in metrics if item["name"] in names],
     }
 
 
 def _watchlist(metrics):
-    items = []
-    for item in metrics:
-        if item["freshness"] == "present":
-            continue
-        reason = {
-            "unavailable": "UNAVAILABLE",
-            "missing": "MISSING",
-            "not_today": "NOT_TODAY",
-        }.get(item["freshness"], "MISSING")
-        items.append({
+    by_name = {item["name"]: item for item in metrics if isinstance(item, dict)}
+    rows = []
+    for name, label in PINNED:
+        item = by_name.get(name) or {}
+        rows.append({
             "source": SOURCE,
-            "name": item["name"],
-            "reason": reason,
+            "name": name,
+            "label": label,
+            "value": item.get("value"),
+            "unit": item.get("unit"),
             "date": item.get("date"),
+            "freshness": item.get("freshness") or "missing",
             "tool": item.get("tool"),
         })
-    return items
+    return rows
 
 
 def open_health(url=None):

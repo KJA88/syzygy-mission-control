@@ -162,38 +162,59 @@ test('training view shows synthetic workout fields from the network', async () =
 });
 
 test('health view shows synthetic Fitbit metrics and labels HRV as Fitbit', async () => {
+  const hrv = {
+    source: 'fitbit', name: 'average_hrv_ms', label: 'HRV', value: 42, unit: 'ms', date: '2020-01-08',
+    tool: 'get_fitbit_hrv', freshness: 'present',
+  };
   const el = await render(snapshot(), false, {
     '/api/health/today': {
       available: true, source: 'fitbit', date: '2020-01-08', generated_at: '2020-01-08T12:00:00-08:00',
-      metrics: [{
-        source: 'fitbit', name: 'average_hrv_ms', value: 42, unit: 'ms', date: '2020-01-08',
-        tool: 'get_fitbit_hrv', freshness: 'present',
-      }],
+      metrics: [hrv],
+      sleep: {
+        date: '2020-01-08', minutes_asleep: 400, minutes_awake: 20, quality_status: 'valid',
+        sleep_measurement_quality: 'stages', sleep_role: 'main_sleep', stages_status: 'ready',
+        sleep_stage_totals: [{type: 'deep', minutes: 60}],
+      },
       recovery: {
         source: 'fitbit', series: 'fitbit_nightly_hrv',
         note: 'Fitbit HRV is the Fitbit nightly series, not Polar H10 morning HRV.',
-        metrics: [{
-          source: 'fitbit', name: 'average_hrv_ms', value: 42, unit: 'ms', date: '2020-01-08',
-          tool: 'get_fitbit_hrv', freshness: 'present',
-        }],
+        metrics: [hrv],
+        workouts: {
+          latest: {name: 'Sample Walk'}, workout_count_7d: 2, active_zone_minutes_7d: 15,
+          heart_rate_zones_7d: {light_minutes: 10, moderate_minutes: 4, vigorous_minutes: 1, peak_minutes: 0},
+        },
       },
-      watchlist: [{source: 'fitbit', name: 'weight_pounds', reason: 'MISSING', date: null, tool: 'get_fitbit_weight'}],
-      freshness: {source: 'fitbit', tools: {get_fitbit_hrv: 'ok', get_fitbit_weight: 'unavailable'}},
+      watchlist: [hrv],
+      freshness: {
+        source: 'fitbit', status: 'online', refreshed_at: '2020-01-08T12:00:00-08:00',
+        unavailable: ['get_fitbit_weight'], missing: ['weight_pounds'],
+      },
     },
     '/api/health/summary?days=7': {
-      available: true, source: 'fitbit', series: {average_hrv_ms: {total: null, sample_count: 3}},
+      available: true, source: 'fitbit',
+      series: {average_hrv_ms: {points: [{value: 30}, {value: 36}, {value: 42}]}},
     },
     '/api/health/trends?days=30': {
       available: true, source: 'fitbit',
-      series: {average_hrv_ms: {source: 'fitbit', unit: 'ms', sample_count: 10, latest: {value: 42}, total: null}},
+      series: {average_hrv_ms: {
+        source: 'fitbit', unit: 'ms', latest: {value: 42},
+        points: [{value: 20}, {value: 30}, {value: 40}, {value: 42}],
+      }},
     },
   });
   assert.equal(el['health-status'].textContent, 'Fitbit read-only · 2020-01-08');
   assert.match(el['health-recovery'].innerHTML, /Fitbit nightly series/);
-  assert.match(el['health-today'].innerHTML, /average_hrv_ms/);
-  assert.match(el['health-today'].innerHTML, /42 ms/);
-  assert.match(el['health-watchlist'].innerHTML, /weight_pounds · MISSING/);
-  assert.match(el['health-trends'].innerHTML, /10 days in 30/);
+  assert.match(el['health-recovery'].innerHTML, /Sample Walk/);
+  assert.match(el['health-recovery'].innerHTML, /7-day workouts 2/);
+  assert.match(el['health-recovery'].innerHTML, /Quality valid/);
+  assert.match(el['health-today'].innerHTML, /deep 60 min/);
+  assert.match(el['health-watchlist'].innerHTML, /HRV/);
+  assert.match(el['health-watchlist'].innerHTML, /higher than recent average/);
+  assert.match(el['health-trends'].innerHTML, /7-day average higher than 30-day average/);
+  assert.match(el['health-trends'].innerHTML, /polyline/);
+  assert.match(el['health-freshness'].innerHTML, /Last successful refresh 2020-01-08T12:00:00-08:00/);
+  assert.match(el['health-freshness'].innerHTML, /get_fitbit_weight/);
+  assert.doesNotMatch(el['health-watchlist'].innerHTML, /No missing Fitbit metrics/);
   assert.doesNotMatch(el['health-today'].innerHTML, /Polar H10/);
   assert.doesNotMatch(el['health-today'].innerHTML, /Authorization/);
 });

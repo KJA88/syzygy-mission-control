@@ -122,9 +122,21 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(metrics["steps"]["value"], 1000)
         self.assertEqual(metrics["active_minutes_total"]["by_activity_level"]["light"], 20)
         self.assertEqual(payload["sleep"]["sleep_stage_totals"][0]["type"], "deep")
+        self.assertEqual(payload["sleep"]["quality_status"], "valid")
         self.assertEqual(payload["recovery"]["series"], "fitbit_nightly_hrv")
-        self.assertIn("weight_pounds", [item["name"] for item in payload["watchlist"]])
-        self.assertIn("average_spo2_percent", [item["name"] for item in payload["watchlist"]])
+        self.assertEqual(payload["recovery"]["sleep"]["quality_status"], "valid")
+        self.assertEqual(
+            [item["name"] for item in payload["watchlist"]],
+            ["average_hrv_ms", "resting_heart_rate_bpm", "minutes_asleep", "weight_pounds", "steps"],
+        )
+        self.assertEqual(payload["watchlist"][0]["value"], 42)
+        self.assertEqual(payload["watchlist"][0]["freshness"], "present")
+        self.assertEqual(payload["watchlist"][3]["freshness"], "missing")
+        self.assertNotIn("average_spo2_percent", [item["name"] for item in payload["watchlist"]])
+        self.assertEqual(payload["freshness"]["status"], "online")
+        self.assertIsNotNone(payload["freshness"]["refreshed_at"])
+        self.assertIn("weight_pounds", payload["freshness"]["missing"])
+        self.assertEqual(payload["freshness"]["unavailable"], [])
         self.assertTrue(payload["available"])
 
     def test_history_wrapper_and_bare_list_both_sum(self):
@@ -168,6 +180,12 @@ class NormalizeTests(unittest.TestCase):
         payload = HealthSource(catalog, now=fixed_now).today()
         self.assertFalse(payload["available"])
         self.assertEqual(payload["reason"], "FITBIT_UNAVAILABLE")
+        self.assertEqual(payload["freshness"]["status"], "offline")
+        self.assertIsNone(payload["freshness"]["refreshed_at"])
+        self.assertTrue(payload["freshness"]["unavailable"])
+        self.assertEqual([item["name"] for item in payload["watchlist"]], [
+            "average_hrv_ms", "resting_heart_rate_bpm", "minutes_asleep", "weight_pounds", "steps",
+        ])
         self.assertNotIn("secret-value", json.dumps(payload))
 
     def test_cache_holds_health_calls_for_ten_minutes(self):
@@ -196,7 +214,7 @@ class RouteTests(unittest.TestCase):
     def test_health_routes_are_read_only_and_leave_mission_health(self):
         class Fake:
             def today(self):
-                return {"available": True, "source": "fitbit", "metrics": [{"name": "steps", "value": 1000}]}
+                return {"available": True, "source": "fitbit", "metrics": [{"name": "steps", "value": 1000}], "recovery": {"metrics": []}}
 
             def summary(self):
                 return {"available": True, "source": "fitbit", "days": 7, "series": {}}
@@ -204,8 +222,22 @@ class RouteTests(unittest.TestCase):
             def trends(self):
                 return {"available": True, "source": "fitbit", "days": 30, "series": {}}
 
+        class FakeWorkouts:
+            def recent(self, limit):
+                return {"available": True, "source": "fitbit", "workouts": [{"source": "fitbit", "name": "Sample Walk"}]}
+
+            def summary(self):
+                return {
+                    "available": True,
+                    "source": "fitbit",
+                    "workout_count": 2,
+                    "totals": {"active_zone_minutes": 15, "heart_rate_zones": {"light_minutes": 10}},
+                    "daily_active_zone_minutes": {"totals": {"active_zone_minutes": 20}},
+                    "daily_time_in_heart_rate_zone": {"available": True, "duration_seconds": {"FAT_BURN": 120}},
+                }
+
         server = _server()
-        handler = server.make_handler(ROOT / "state", ROOT / "ui", 120, 20, health=Fake())
+        handler = server.make_handler(ROOT / "state", ROOT / "ui", 120, 20, workouts=FakeWorkouts(), health=Fake())
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
@@ -219,6 +251,9 @@ class RouteTests(unittest.TestCase):
                 self.assertEqual(response.headers.get("Cache-Control"), "no-store")
                 today = json.loads(response.read().decode())
             self.assertEqual(today["metrics"][0]["value"], 1000)
+            self.assertEqual(today["recovery"]["workouts"]["latest"]["name"], "Sample Walk")
+            self.assertEqual(today["recovery"]["workouts"]["workout_count_7d"], 2)
+            self.assertEqual(today["recovery"]["workouts"]["active_zone_minutes_7d"], 15)
             with urllib.request.urlopen(base + "/api/health/summary?days=7", timeout=2) as response:
                 self.assertEqual(json.loads(response.read().decode())["days"], 7)
             with urllib.request.urlopen(base + "/api/health/trends?days=30", timeout=2) as response:

@@ -345,15 +345,56 @@ def _health_days(qs, allowed):
     return allowed
 
 
-def _health_today(health, qs):
+def _workout_context(workouts):
+    """Reuse the workout adapter cache. This does not call Fitbit exercise tools itself."""
+    if workouts is None:
+        return {"available": False, "reason": "FITBIT_UNAVAILABLE", "source": "fitbit"}
+    try:
+        recent = workouts.recent(1)
+        summary = workouts.summary()
+    except Exception:
+        return {"available": False, "reason": "FITBIT_UNAVAILABLE", "source": "fitbit"}
+    rows = recent.get("workouts") if isinstance(recent, dict) else None
+    latest = rows[0] if isinstance(rows, list) and rows else None
+    totals = summary.get("totals") if isinstance(summary, dict) and isinstance(summary.get("totals"), dict) else {}
+    daily = summary.get("daily_active_zone_minutes") if isinstance(summary, dict) else {}
+    return {
+        "available": bool(latest) or (isinstance(summary, dict) and summary.get("available") is True),
+        "source": "fitbit",
+        "latest": latest,
+        "workout_count_7d": summary.get("workout_count") if isinstance(summary, dict) else None,
+        "active_zone_minutes_7d": totals.get("active_zone_minutes"),
+        "heart_rate_zones_7d": totals.get("heart_rate_zones"),
+        "daily_active_zone_minutes_7d": daily.get("totals") if isinstance(daily, dict) else None,
+        "time_in_heart_rate_zone_7d": summary.get("daily_time_in_heart_rate_zone") if isinstance(summary, dict) else None,
+    }
+
+
+def _attach_workouts(payload, workouts):
+    if not isinstance(payload, dict):
+        return payload
+    recovery = payload.get("recovery")
+    if not isinstance(recovery, dict):
+        recovery = {
+            "source": "fitbit",
+            "series": "fitbit_nightly_hrv",
+            "note": "Fitbit HRV is the Fitbit nightly series, not Polar H10 morning HRV.",
+            "metrics": [],
+        }
+        payload["recovery"] = recovery
+    recovery["workouts"] = _workout_context(workouts)
+    return payload
+
+
+def _health_today(health, qs, workouts=None):
     if qs:
         return 400, {"available": False, "reason": "MALFORMED_PARAMETERS", "source": "fitbit", "metrics": []}
     if health is None:
-        return 200, _health_offline()
+        return 200, _attach_workouts(_health_offline(), workouts)
     try:
-        return 200, health.today()
+        return 200, _attach_workouts(health.today(), workouts)
     except Exception:
-        return 200, _health_offline()
+        return 200, _attach_workouts(_health_offline(), workouts)
 
 
 def _health_range(health, qs, allowed, method):
@@ -517,7 +558,7 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 code, payload = _workout_summary(workouts, qs)
                 return self._json(code, payload)
             if path == "/api/health/today":
-                code, payload = _health_today(health, qs)
+                code, payload = _health_today(health, qs, workouts)
                 return self._json(code, payload)
             if path == "/api/health/summary":
                 code, payload = _health_range(health, qs, 7, health.summary if health is not None else lambda: _health_offline())

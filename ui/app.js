@@ -1312,11 +1312,69 @@
   }
 
   function healthCard(metric) {
-    return '<article class="card"><h2>' + esc(metric.name) + "</h2>" +
+    return '<article class="card"><h2>' + esc(metric.label || metric.name) + "</h2>" +
       "<p>" + esc(healthValue(metric)) + "</p>" +
       "<p>" + esc(metric.source || "fitbit") + " · " + esc(metric.freshness || "missing") + "</p>" +
-      "<p>Date " + esc(metric.date || "—") + "</p>" +
+      "<p>Measured " + esc(metric.date || "—") + "</p>" +
       "<p>Tool " + esc(metric.tool || "—") + "</p></article>";
+  }
+
+  function averageOf(points) {
+    const numbers = (points || []).map(function (point) { return point && point.value; }).filter(function (value) {
+      return typeof value === "number" && Number.isFinite(value);
+    });
+    if (!numbers.length) return null;
+    return numbers.reduce(function (sum, value) { return sum + value; }, 0) / numbers.length;
+  }
+
+  function compareValue(value, points) {
+    if (typeof value !== "number" || !Number.isFinite(value)) return "trend unavailable";
+    const numbers = (points || []).map(function (point) { return point && point.value; }).filter(function (item) {
+      return typeof item === "number" && Number.isFinite(item);
+    });
+    const prior = numbers.length > 1 ? numbers.slice(0, -1) : numbers;
+    if (!prior.length) return "trend unavailable";
+    const average = prior.reduce(function (sum, item) { return sum + item; }, 0) / prior.length;
+    const delta = Math.abs(value - average);
+    if (delta < 0.05) return "same as recent average";
+    return value > average ? "higher than recent average" : "lower than recent average";
+  }
+
+  function movement(weekPoints, monthPoints) {
+    const week = averageOf(weekPoints);
+    const month = averageOf(monthPoints);
+    if (week == null || month == null) return "7-day vs 30-day movement unavailable";
+    if (Math.abs(week - month) < 0.05) return "7-day average same as 30-day average";
+    return week > month ? "7-day average higher than 30-day average" : "7-day average lower than 30-day average";
+  }
+
+  function sparkline(points) {
+    const values = (points || []).map(function (point) { return point && point.value; }).filter(function (value) {
+      return typeof value === "number" && Number.isFinite(value);
+    });
+    if (values.length < 2) return "";
+    const min = Math.min.apply(null, values);
+    const max = Math.max.apply(null, values);
+    const span = max - min || 1;
+    const coords = values.map(function (value, index) {
+      const x = (index / (values.length - 1)) * 120;
+      const y = 31 - ((value - min) / span) * 30;
+      return x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+    return '<svg class="spark" viewBox="0 0 120 32" width="120" height="32" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="1.5" points="' + coords + '"/></svg>';
+  }
+
+  function sleepCard(sleep) {
+    if (!sleep) return '<p class="hint">No sleep summary.</p>';
+    const stages = (sleep.sleep_stage_totals || []).map(function (stage) {
+      return (stage.type || "stage") + " " + plainNum(stage.minutes) + " min";
+    }).join(" · ");
+    return '<article class="card"><h2>Sleep</h2>' +
+      "<p>" + esc(plainNum(sleep.minutes_asleep)) + " min asleep · " + esc(plainNum(sleep.minutes_awake)) + " min awake</p>" +
+      "<p>Quality " + esc(sleep.quality_status || "—") + " · measurement " + esc(sleep.sleep_measurement_quality || "—") + "</p>" +
+      "<p>Role " + esc(sleep.sleep_role || "—") + " · stages " + esc(sleep.stages_status || "—") + "</p>" +
+      "<p>" + esc(stages || "No stage totals") + "</p>" +
+      "<p>Measured " + esc(sleep.date || "—") + " · source fitbit</p></article>";
   }
 
   function renderHealth(today, summary, trends) {
@@ -1335,17 +1393,31 @@
       const hrv = metrics.filter(function (item) { return item.name === "average_hrv_ms"; })[0];
       setText("overview-health", hrv && hrv.value != null ? "Fitbit HRV " + hrv.value + " ms" : "Fitbit connected");
     }
+    const sleep = today && today.sleep;
     if (todayNode) {
-      todayNode.innerHTML = metrics.length
+      todayNode.innerHTML = sleepCard(sleep) + (metrics.length
         ? metrics.map(healthCard).join("")
-        : '<p class="hint">No health metrics.</p>';
+        : '<p class="hint">No health metrics.</p>');
     }
     const recovery = today && today.recovery;
     if (recoveryNode) {
       const rows = recovery && Array.isArray(recovery.metrics) ? recovery.metrics : [];
+      const session = recovery && recovery.workouts ? recovery.workouts : {};
+      const latest = session.latest || {};
+      const zones = session.heart_rate_zones_7d || {};
+      const comparisons = rows.map(function (item) {
+        const points = summary && summary.series && summary.series[item.name] ? summary.series[item.name].points : [];
+        return "<p>" + esc(item.name) + " " + esc(compareValue(item.value, points)) + "</p>";
+      }).join("");
       recoveryNode.innerHTML = '<article class="card"><h2>Fitbit recovery context</h2><p>' +
         esc(recovery && recovery.note ? recovery.note : "Fitbit HRV is the Fitbit nightly series, not Polar H10 morning HRV.") +
-        "</p></article>" + rows.map(healthCard).join("");
+        "</p>" + comparisons +
+        "<p>Latest workout " + esc(latest.name || "none") + "</p>" +
+        "<p>7-day workouts " + esc(session.workout_count_7d != null ? String(session.workout_count_7d) : "—") + "</p>" +
+        "<p>7-day active-zone minutes " + esc(session.active_zone_minutes_7d != null ? String(session.active_zone_minutes_7d) : "—") + "</p>" +
+        "<p>7-day workout zones " + esc(zoneText(zones)) + "</p></article>" +
+        sleepCard(recovery && recovery.sleep ? recovery.sleep : sleep) +
+        rows.map(healthCard).join("");
     }
     if (trendsNode) {
       const series = trends && trends.available === true ? trends.series || {} : null;
@@ -1353,34 +1425,47 @@
       if (!series) {
         trendsNode.innerHTML = '<article class="card"><h2>30-day trends</h2><p>Unavailable</p></article>';
       } else {
-        trendsNode.innerHTML = Object.keys(series).map(function (name) {
+        const priority = ["average_hrv_ms", "resting_heart_rate_bpm", "minutes_asleep", "weight_pounds", "steps"];
+        const names = priority.filter(function (name) { return series[name]; }).concat(
+          Object.keys(series).filter(function (name) { return priority.indexOf(name) < 0; })
+        );
+        trendsNode.innerHTML = names.map(function (name) {
           const item = series[name] || {};
           const week = summarySeries[name] || {};
           const latest = item.latest || {};
-          const total = week.total != null ? " · 7-day total " + week.total : "";
           return '<article class="card"><h2>' + esc(name) + "</h2>" +
             "<p>Latest " + esc(latest.value != null ? String(latest.value) : "—") + " " + esc(item.unit || "") + "</p>" +
-            "<p>" + esc(item.sample_count || 0) + " days in 30" + esc(total) + "</p>" +
+            "<p>" + esc(movement(week.points, item.points)) + "</p>" +
+            sparkline(item.points) +
             "<p>" + esc(item.source || "fitbit") + "</p></article>";
         }).join("");
       }
     }
     if (watchNode) {
       const items = today && Array.isArray(today.watchlist) ? today.watchlist : [];
+      const summarySeries = summary && summary.series ? summary.series : {};
       watchNode.innerHTML = items.length
         ? items.map(function (item) {
-          return "<p>" + esc(item.name) + " · " + esc(item.reason) + " · " + esc(item.date || "—") + "</p>";
+          const points = summarySeries[item.name] ? summarySeries[item.name].points : [];
+          return '<article class="card"><h2>' + esc(item.label || item.name) + "</h2>" +
+            "<p>" + esc(healthValue(item)) + "</p>" +
+            "<p>Freshness " + esc(item.freshness || "missing") + "</p>" +
+            "<p>Measured " + esc(item.date || "—") + "</p>" +
+            "<p>" + esc(compareValue(item.value, points)) + "</p></article>";
         }).join("")
-        : '<p class="hint">No missing Fitbit metrics.</p>';
+        : '<p class="hint">Watchlist unavailable.</p>';
     }
     if (freshNode) {
-      const tools = today && today.freshness && today.freshness.tools ? today.freshness.tools : {};
-      const names = Object.keys(tools);
-      freshNode.innerHTML = '<article class="card"><h2>Fitbit MCP</h2><p>Source ' +
-        esc(today && today.source ? today.source : "fitbit") + "</p><p>Generated " +
-        esc(today && today.generated_at ? today.generated_at : "—") + "</p><p>" +
-        esc(names.length ? names.map(function (name) { return name + " " + tools[name]; }).join(" · ") : "No tool status") +
-        "</p></article>";
+      const freshness = today && today.freshness ? today.freshness : {};
+      const unavailable = Array.isArray(freshness.unavailable) ? freshness.unavailable : [];
+      const missing = Array.isArray(freshness.missing) ? freshness.missing : [];
+      const online = today && today.available === true;
+      freshNode.innerHTML = '<article class="card"><h2>Fitbit source</h2><p>' +
+        esc(online ? "online" : "offline") + " · " + esc(today && today.source ? today.source : "fitbit") + "</p>" +
+        "<p>Last successful refresh " + esc(freshness.refreshed_at || "none in this response") + "</p>" +
+        "<p>That time is when Mission Control built this summary, not the measurement time.</p>" +
+        "<p>Unavailable endpoints " + esc(unavailable.length ? unavailable.join(", ") : "none") + "</p>" +
+        "<p>Missing values " + esc(missing.length ? missing.join(", ") : "none") + "</p></article>";
     }
   }
 
