@@ -1,8 +1,10 @@
 # ADR-SYZ-MC-001 — Mission Control and Guardian Architecture
 
-Status: Accepted for V0.1
+Status: Accepted for V0.1. Historical.
 Date: 2026-09-23
 Owner: KJA
+
+This ADR records the 2026-09-23 decision. Later phases added the State Engine, RoArm skills, perception, Home Assistant, the Mission Engine, and Access-protected remote Mission Control. Current ownership is [ARCHITECTURE_CURRENT.md](ARCHITECTURE_CURRENT.md).
 
 ## Context
 

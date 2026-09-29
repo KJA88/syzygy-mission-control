@@ -125,6 +125,10 @@ and the system health rollup is unchanged. A new owner process still recovers
 
 ## Planned adapters
 
+The State Engine stays read-only. Phase 3 added RoArm skill commands outside
+this view. The control owner writes the operational record. Guardian only
+reads it. Adapters below are observation sources, not command paths.
+
 Adapters must be added one at a time with fixtures, freshness rules, and live
 verification:
 

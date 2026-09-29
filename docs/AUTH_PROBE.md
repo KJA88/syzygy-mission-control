@@ -66,7 +66,7 @@ protocol, and session settings. Auth overrides are applied to a copy only.
 
 The dedicated auth transport uses `http.client` to preserve Cloudflare Access
 header casing, handles JSON and SSE responses, and does not follow redirects.
-TV remains `auth_required: false`; RoArm remains out of scope.
+TV remains `auth_required: false`. This auth-probe set does not cover RoArm; arm command ownership is in [ARCHITECTURE_CURRENT.md](ARCHITECTURE_CURRENT.md).
 
 ## Deploy
 
