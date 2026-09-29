@@ -4,7 +4,7 @@ import json
 import threading
 import unittest
 import urllib.request
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from perception.hub import VisionHub, devices_from, normalize_cameras
@@ -100,7 +100,9 @@ class PerceptionTests(unittest.TestCase):
         backyard = view["cameras"][0]
         self.assertEqual(backyard["capabilities"], ["stream", "detect", "snapshot", "ptz", "track"])
         self.assertEqual(backyard["parent_id"], "roarm-1")
-        self.assertEqual(backyard["stream_url"], "http://vision/stream/backyard")
+        self.assertEqual(backyard["stream_url"], "/api/perception/stream/backyard")
+        self.assertIsNone(backyard["hub_url"])
+        self.assertIsNone(view["hub_url"])
         front = view["cameras"][1]
         self.assertEqual(front["capabilities"], ["stream", "detect", "snapshot"])
         self.assertEqual(front["health"], "offline")
@@ -108,6 +110,7 @@ class PerceptionTests(unittest.TestCase):
         self.assertEqual(gate["capabilities"], ["stream", "detect", "snapshot"])
         self.assertEqual(gate["health"], "unknown")
         encoded = json.dumps(view)
+        self.assertNotIn("http://vision", encoded)
         self.assertNotIn("rtsp://", encoded)
         self.assertNotIn("ptz_pass", encoded)
         self.assertNotIn("hidden", encoded)
@@ -258,6 +261,137 @@ class PerceptionTests(unittest.TestCase):
         finally:
             httpd.shutdown()
             httpd.server_close()
+
+    def test_browser_camera_payload_has_no_jetson_origin(self):
+        view = normalize_cameras(
+            {"cameras": {"backyard": {"name": "Back Yard", "type": "ptz", "rtsp_url": "rtsp://secret"}}},
+            {"backyard": {"online": True, "mode": "ACTIVE"}},
+            [],
+            service_base="http://192.168.1.17:8081",
+            hub_ui="http://192.168.1.17:8080/",
+        )
+        encoded = json.dumps(view)
+        self.assertEqual(view["cameras"][0]["stream_url"], "/api/perception/stream/backyard")
+        self.assertIsNone(view["hub_url"])
+        self.assertNotIn("192.168.1.17", encoded)
+        self.assertNotIn("8081", encoded)
+        self.assertNotIn("rtsp://", encoded)
+
+    def test_stream_proxy_relays_multipart_and_degrades(self):
+        frame = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8\xff\xd9\r\n"
+        config = {"cameras": {
+            "backyard": {"name": "Back Yard", "type": "fixed"},
+            "frontyard": {"name": "Front Yard", "type": "fixed"},
+        }}
+
+        class Upstream(BaseHTTPRequestHandler):
+            def log_message(self, fmt, *args):
+                return
+
+            def do_GET(self):
+                if self.path == "/api/config":
+                    body = json.dumps(config).encode("utf-8")
+                elif self.path == "/api/cameras/status":
+                    body = b"{}"
+                elif self.path.startswith("/api/events"):
+                    body = b"[]"
+                else:
+                    body = None
+                if body is not None:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path == "/stream/backyard":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                    self.send_header("Content-Length", str(len(frame)))
+                    self.end_headers()
+                    self.wfile.write(frame)
+                    return
+                if self.path == "/stream/frontyard":
+                    self.send_response(503)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        upstream_thread.start()
+        spec = importlib.util.spec_from_file_location("mc_stream_server", ROOT / "ui" / "server.py")
+        server = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(server)
+        origin = "http://127.0.0.1:%d" % upstream.server_port
+        vision = VisionHub(origin, origin, timeout=2)
+        handler = server.make_handler(ROOT / "state", ROOT / "ui", 120, 20, vision=vision)
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        base = "http://127.0.0.1:%d" % httpd.server_port
+        try:
+            with urllib.request.urlopen(base + "/api/perception/stream/backyard", timeout=2) as response:
+                body = response.read()
+                content_type = response.headers["Content-Type"]
+                cache = response.headers["Cache-Control"]
+            self.assertEqual(content_type, "multipart/x-mixed-replace; boundary=frame")
+            self.assertEqual(cache, "no-store")
+            self.assertIn(b"\xff\xd8\xff\xd9", body)
+            request = urllib.request.Request(base + "/api/perception/stream/missing")
+            with self.assertRaises(urllib.error.HTTPError) as missing:
+                urllib.request.urlopen(request, timeout=2)
+            self.assertEqual(missing.exception.code, 404)
+            self.assertEqual(json.loads(missing.exception.read().decode("utf-8"))["reason"], "UNKNOWN_CAMERA")
+            missing.exception.close()
+            with self.assertRaises(urllib.error.HTTPError) as down:
+                urllib.request.urlopen(base + "/api/perception/stream/frontyard", timeout=2)
+            self.assertEqual(down.exception.code, 503)
+            self.assertEqual(json.loads(down.exception.read().decode("utf-8"))["reason"], "VISION_HUB_UNAVAILABLE")
+            down.exception.close()
+            with urllib.request.urlopen(base + "/api/perception/cameras", timeout=2) as response:
+                cameras = json.loads(response.read().decode("utf-8"))
+            encoded = json.dumps(cameras)
+            self.assertEqual(cameras["cameras"][0]["stream_url"], "/api/perception/stream/backyard")
+            self.assertNotIn("127.0.0.1:%d" % upstream.server_port, encoded)
+
+            class Drop:
+                def write(self, _chunk):
+                    raise BrokenPipeError("closed")
+
+                def flush(self):
+                    return None
+
+            class Pieces:
+                def __init__(self):
+                    self.closed = False
+                    self.sizes = []
+                    self._pending = [b"\xff\xd8"]
+
+                def read(self, size=None):
+                    if size is None:
+                        raise AssertionError("stream was buffered")
+                    self.sizes.append(size)
+                    if not self._pending:
+                        return b""
+                    return self._pending.pop(0)
+
+                def close(self):
+                    self.closed = True
+
+            pieces = Pieces()
+            with self.assertRaises(BrokenPipeError):
+                server.relay_stream(Drop(), pieces)
+            self.assertTrue(pieces.closed)
+            self.assertEqual(pieces.sizes, [8192])
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            upstream.shutdown()
+            upstream.server_close()
 
 
 if __name__ == "__main__":
