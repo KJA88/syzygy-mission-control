@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""SYZYGY Mission Control — LAN-only UI and RoArm skill API.
+"""SYZYGY Mission Control UI and RoArm skill API.
 
 Serves static UI assets and Guardian outputs (snapshot.json + events.jsonl).
 Named skill requests and the engineering JSON path are served on this same
-LAN server. Does NOT probe MCP, hosts, Cloudflare, or any remote service.
-Must remain LAN-only — never publish through Cloudflare.
+server. Does NOT probe MCP, hosts, or any remote service.
+
+The origin stays on the Pi. A phone may reach only this UI through the
+dedicated Cloudflare Access hostname and tunnel. Do not publish port 9070
+directly, and do not publish Home Assistant, RoArm, Vision Hub, MQTT, or MCP
+ports. Local LAN access stays available.
 
 Mirrors guardian.storage.read_snapshot heartbeat freshness:
 if guardian.heartbeat_at is missing or older than hard_stale seconds (default 120),
@@ -30,6 +34,19 @@ DEFAULT_PORT = 9070
 DEFAULT_HARD_STALE_S = 120
 DEFAULT_EVENTS_LIMIT = 50
 UI_DIR = Path(__file__).resolve().parent
+STATIC_TYPES = {
+    ".webmanifest": "application/manifest+json",
+    ".js": "text/javascript",
+    ".png": "image/png",
+}
+
+
+def _static_type(path: Path) -> str:
+    explicit = STATIC_TYPES.get(path.suffix.lower())
+    ctype = explicit or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+    if ctype.startswith("text/") or ctype in ("application/javascript", "application/json", "application/manifest+json"):
+        return ctype + "; charset=utf-8"
+    return ctype
 
 
 def utcnow() -> float:
@@ -500,12 +517,8 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
             if not target.is_file():
                 return self._send(404, b"not found\n", "text/plain; charset=utf-8")
             data = target.read_bytes()
-            ctype, _ = mimetypes.guess_type(str(target))
-            if ctype is None:
-                ctype = "application/octet-stream"
-            if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
-                ctype = ctype + "; charset=utf-8"
-            cache = "no-cache" if rel.endswith((".html", ".js", ".css")) else "public, max-age=60"
+            ctype = _static_type(target)
+            cache = "no-cache" if rel.endswith((".html", ".js", ".css", ".webmanifest")) else "public, max-age=60"
             return self._send(200, data, ctype, cache=cache)
 
     return Handler
@@ -542,7 +555,7 @@ def build_owner(state_dir: Path):
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="SYZYGY Mission Control LAN UI and RoArm skill API")
     p.add_argument("--host", default=os.environ.get("MC_HOST", DEFAULT_HOST),
-                   help="Bind address (default 127.0.0.1; use 0.0.0.0 for LAN). NEVER Cloudflare.")
+                   help="Bind address (default 127.0.0.1; use 0.0.0.0 for LAN). Do not publish this port directly.")
     p.add_argument("--port", type=int, default=int(os.environ.get("MC_PORT", DEFAULT_PORT)))
     p.add_argument("--state-dir", default=os.environ.get("MC_STATE_DIR", "state"),
                    help="Directory containing snapshot.json and events.jsonl")
@@ -563,8 +576,8 @@ def main(argv=None):
         return 2
     if args.host not in ("127.0.0.1", "localhost", "0.0.0.0") and not args.host.startswith("192.168."):
         sys.stderr.write(
-            "WARNING: bind host %r looks unusual. Mission Control must stay LAN-only; "
-            "do not publish via Cloudflare.\n" % (args.host,)
+            "WARNING: bind host %r looks unusual. Keep the origin on localhost or the LAN; "
+            "do not publish port 9070 directly.\n" % (args.host,)
         )
     owner = build_owner(state_dir)
     root = Path(__file__).resolve().parent.parent
@@ -593,7 +606,7 @@ def main(argv=None):
         "  state-dir=%s\n"
         "  ui-dir=%s\n"
         "  hard-stale-s=%s\n"
-        "  LAN-only — do not expose via Cloudflare\n"
+        "  origin stays local — remote access is only the Access hostname\n"
         % (args.host, args.port, state_dir, ui_dir, args.hard_stale_s)
     )
     try:
