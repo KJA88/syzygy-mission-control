@@ -14,6 +14,7 @@ import sys
 
 HR_SERVICE_UUID = "0000180d-0000-1000-8000-00805f9b34fb"
 HR_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
+CONNECT_TIMEOUT_S = 20.0
 FLAG_HR_UINT16 = 0x01
 FLAG_ENERGY_EXPENDED = 0x08
 FLAG_RR_INTERVALS = 0x10
@@ -167,6 +168,11 @@ async def _listen(seconds, find_device, client_factory):
     return 1
 
 
+def open_client(client_cls, device):
+    """Construct a client from the discovered device with an explicit connect timeout."""
+    return client_cls(device, timeout=CONNECT_TIMEOUT_S)
+
+
 async def run(seconds):
     try:
         from bleak import BleakClient, BleakScanner
@@ -179,7 +185,7 @@ async def run(seconds):
         return 1
 
     def client_factory(device):
-        return BleakClient(device)
+        return open_client(BleakClient, device)
 
     async def find_device():
         return await _find_h10(BleakScanner)

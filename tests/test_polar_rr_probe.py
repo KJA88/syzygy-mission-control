@@ -154,3 +154,18 @@ class PolarRrProbeTests(unittest.TestCase):
         self.assertEqual(calls["uuid"], probe.HR_MEASUREMENT_UUID)
         self.assertEqual(calls["stopped"], probe.HR_MEASUREMENT_UUID)
         self.assertIn("Retrying discovery once.", stderr.getvalue())
+
+    def test_client_connect_timeout_is_explicitly_20_seconds(self):
+        probe = _probe()
+        device = object()
+        seen = {}
+
+        class Client:
+            def __init__(self, opened, timeout):
+                seen["device"] = opened
+                seen["timeout"] = timeout
+
+        probe.open_client(Client, device)
+        self.assertIs(seen["device"], device)
+        self.assertEqual(seen["timeout"], 20.0)
+        self.assertEqual(probe.CONNECT_TIMEOUT_S, 20.0)
