@@ -1262,4 +1262,7 @@
 
   tick();
   setInterval(tick, REFRESH_MS);
+  if (typeof navigator !== "undefined" && navigator.serviceWorker && navigator.serviceWorker.register) {
+    navigator.serviceWorker.register("/sw.js").catch(function () {});
+  }
 })();
