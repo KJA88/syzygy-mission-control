@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import sys
 
+HR_SERVICE_UUID = "0000180d-0000-1000-8000-00805f9b34fb"
 HR_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
 FLAG_HR_UINT16 = 0x01
 FLAG_ENERGY_EXPENDED = 0x08
@@ -59,6 +60,42 @@ def format_measurement(heart_rate, intervals):
     return ["HR %d bpm   RR %.1f ms" % (heart_rate, interval) for interval in intervals]
 
 
+def _uuid_key(value):
+    return str(value).replace("-", "").lower()
+
+
+def advertisement_matches_h10(name, local_name, service_uuids):
+    """Match a Polar H10 name, advertised local name, or Heart Rate Service."""
+    for label in (name, local_name):
+        if label and str(label).startswith("Polar H10"):
+            return "name"
+    wanted = _uuid_key(HR_SERVICE_UUID)
+    for uuid in service_uuids or ():
+        if _uuid_key(uuid) == wanted:
+            return "service"
+    return None
+
+
+def select_h10(records):
+    """Choose one device from (device, name, local_name, service_uuids) records.
+
+    Named Polar H10 advertisements win over a Heart Rate Service match with no
+    Polar name. Returns (device, candidate_count).
+    """
+    named = []
+    by_service = []
+    for device, name, local_name, service_uuids in records:
+        kind = advertisement_matches_h10(name, local_name, service_uuids)
+        if kind == "name":
+            named.append(device)
+        elif kind == "service":
+            by_service.append(device)
+    chosen = named or by_service
+    if not chosen:
+        return None, 0
+    return chosen[0], len(chosen)
+
+
 def _permission_denied(exc):
     text = str(exc).lower()
     markers = (
@@ -73,19 +110,61 @@ def _permission_denied(exc):
 
 
 async def _find_h10(scanner_cls):
-    devices = await scanner_cls.discover(timeout=10.0)
-    matches = [device for device in devices if (device.name or "").startswith("Polar H10")]
-    if not matches:
+    found = await scanner_cls.discover(timeout=10.0, return_adv=True)
+    records = []
+    for device, advertisement in found.values():
+        records.append((device, device.name, advertisement.local_name, advertisement.service_uuids))
+    device, count = select_h10(records)
+    if device is None:
         print(
             "No Polar H10 found. Wear the strap, moisten the electrode pads, "
             "and close other HR apps if the sensor is already connected.",
             file=sys.stderr,
         )
         return None
-    if len(matches) > 1:
+    if count > 1:
         print("Several Polar H10 advertisements. Using the first.", flush=True)
     print("Connecting to Polar H10.", flush=True)
-    return matches[0]
+    return device
+
+
+async def _session(client_factory, device, seconds):
+    def on_measurement(_sender, data):
+        try:
+            heart_rate, intervals = parse_heart_rate_measurement(bytes(data))
+        except ValueError as exc:
+            print("Malformed heart-rate notification: %s" % exc, flush=True)
+            return
+        for line in format_measurement(heart_rate, intervals):
+            print(line, flush=True)
+
+    async with client_factory(device) as client:
+        await client.start_notify(HR_MEASUREMENT_UUID, on_measurement)
+        print("Listening for %.0f seconds. Ctrl+C disconnects." % seconds, flush=True)
+        try:
+            await asyncio.sleep(seconds)
+        finally:
+            if client.is_connected:
+                await client.stop_notify(HR_MEASUREMENT_UUID)
+
+
+async def _listen(seconds, find_device, client_factory):
+    device = await find_device()
+    if device is None:
+        return 1
+    for attempt in (1, 2):
+        try:
+            await _session(client_factory, device, seconds)
+            return 0
+        except (asyncio.TimeoutError, TimeoutError):
+            if attempt == 2:
+                print("Connection to Polar H10 timed out.", file=sys.stderr)
+                return 1
+            print("Connection timed out. Retrying discovery once.", file=sys.stderr)
+            device = await find_device()
+            if device is None:
+                return 1
+    return 1
 
 
 async def run(seconds):
@@ -99,38 +178,14 @@ async def run(seconds):
         )
         return 1
 
-    try:
-        device = await _find_h10(BleakScanner)
-    except BleakError as exc:
-        print("BLE error: %s" % exc, file=sys.stderr)
-        if _permission_denied(exc):
-            print(
-                "Bluetooth access was denied for this user. "
-                "No group, D-Bus, or Bluetooth configuration was changed.",
-                file=sys.stderr,
-            )
-        return 1
-    if device is None:
-        return 1
+    def client_factory(device):
+        return BleakClient(device)
 
-    def on_measurement(_sender, data):
-        try:
-            heart_rate, intervals = parse_heart_rate_measurement(bytes(data))
-        except ValueError as exc:
-            print("Malformed heart-rate notification: %s" % exc, flush=True)
-            return
-        for line in format_measurement(heart_rate, intervals):
-            print(line, flush=True)
+    async def find_device():
+        return await _find_h10(BleakScanner)
 
     try:
-        async with BleakClient(device) as client:
-            await client.start_notify(HR_MEASUREMENT_UUID, on_measurement)
-            print("Listening for %.0f seconds. Ctrl+C disconnects." % seconds, flush=True)
-            try:
-                await asyncio.sleep(seconds)
-            finally:
-                if client.is_connected:
-                    await client.stop_notify(HR_MEASUREMENT_UUID)
+        return await _listen(seconds, find_device, client_factory)
     except BleakError as exc:
         print("BLE error: %s" % exc, file=sys.stderr)
         if _permission_denied(exc):
@@ -142,7 +197,6 @@ async def run(seconds):
         return 1
     except KeyboardInterrupt:
         return 0
-    return 0
 
 
 def main(argv=None):
