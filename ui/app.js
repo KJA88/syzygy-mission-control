@@ -5,6 +5,7 @@
   "use strict";
 
   const REFRESH_MS = 7000;
+  const WORKOUT_REFRESH_MS = 10 * 60 * 1000;
   const ACTIVITY_LIMIT = 20;
   const TZ = "America/Los_Angeles";
 
@@ -1183,6 +1184,119 @@
     }
   }
 
+  function plainNum(value) {
+    return typeof value === "number" && Number.isFinite(value) ? String(value) : "—";
+  }
+
+  function zoneText(zones) {
+    const names = [
+      ["light_minutes", "light"],
+      ["moderate_minutes", "moderate"],
+      ["vigorous_minutes", "vigorous"],
+      ["peak_minutes", "peak"],
+    ];
+    const parts = [];
+    names.forEach(function (pair) {
+      const value = zones && zones[pair[0]];
+      if (typeof value === "number" && Number.isFinite(value)) parts.push(pair[1] + " " + value);
+    });
+    return parts.length ? parts.join(" · ") : "—";
+  }
+
+  function workoutCard(workout) {
+    const zones = workout.heart_rate_zones || {};
+    const gps = workout.has_gps === true ? "yes" : workout.has_gps === false ? "no" : "—";
+    return '<article class="card"><h2>' + esc(workout.name || workout.exercise_type || "Workout") + "</h2>" +
+      "<p>" + esc(workout.exercise_type || "type unavailable") + " · " + esc(workout.source || "fitbit") + "</p>" +
+      "<p>Start " + esc(workout.start || "—") + "</p>" +
+      "<p>End " + esc(workout.end || "—") + "</p>" +
+      "<p>Duration " + esc(plainNum(workout.duration_minutes)) + " min</p>" +
+      "<p>Distance " + esc(plainNum(workout.distance_miles)) + " mi</p>" +
+      "<p>Calories " + esc(plainNum(workout.calories)) + "</p>" +
+      "<p>Steps " + esc(plainNum(workout.steps)) + "</p>" +
+      "<p>Average HR " + esc(plainNum(workout.average_heart_rate_bpm)) + " bpm</p>" +
+      "<p>Active-zone minutes " + esc(plainNum(workout.active_zone_minutes)) + "</p>" +
+      "<p>Zones " + esc(zoneText(zones)) + "</p>" +
+      "<p>Pace " + esc(plainNum(workout.average_pace_minutes_per_mile)) + " min/mi</p>" +
+      "<p>GPS " + esc(gps) + "</p>" +
+      "<p>Device " + esc(workout.device || "—") + "</p>" +
+      "<p>Platform " + esc(workout.platform || "—") + "</p>" +
+      "<p>Recording " + esc(workout.recording_method || "—") + "</p></article>";
+  }
+
+  function summaryCard(summary) {
+    const totals = (summary && summary.totals) || {};
+    const zones = totals.heart_rate_zones || {};
+    const daily = (summary && summary.daily_active_zone_minutes) || {};
+    const dailyTotals = daily.totals || {};
+    const timeInZone = (summary && summary.daily_time_in_heart_rate_zone) || {};
+    const seconds = timeInZone.duration_seconds || {};
+    const zoneLines = Object.keys(seconds).map(function (name) {
+      return name + " " + plainNum(seconds[name]) + " s";
+    }).join(" · ");
+    const dailyLine = daily.available === false
+      ? "Daily active-zone minutes unavailable"
+      : "Daily active-zone minutes " + plainNum(dailyTotals.active_zone_minutes) +
+        " · fat burn " + plainNum(dailyTotals.fat_burn_zone_minutes) +
+        " · cardio " + plainNum(dailyTotals.cardio_zone_minutes) +
+        " · peak " + plainNum(dailyTotals.peak_zone_minutes);
+    const zoneLine = timeInZone.available === false
+      ? "Daily time in heart-rate zone unavailable"
+      : "Daily time in zone " + (zoneLines || "—");
+    return '<article class="card"><h2>7-day totals</h2>' +
+      "<p>" + esc(summary.workout_count) + " workouts · " + esc(summary.source || "fitbit") + "</p>" +
+      "<p>" + esc(summary.start_date || "—") + " to " + esc(summary.end_date || "—") + "</p>" +
+      "<p>Duration " + esc(plainNum(totals.duration_minutes)) + " min</p>" +
+      "<p>Distance " + esc(plainNum(totals.distance_miles)) + " mi</p>" +
+      "<p>Calories " + esc(plainNum(totals.calories)) + "</p>" +
+      "<p>Steps " + esc(plainNum(totals.steps)) + "</p>" +
+      "<p>Workout active-zone minutes " + esc(plainNum(totals.active_zone_minutes)) + "</p>" +
+      "<p>Workout zones " + esc(zoneText(zones)) + "</p>" +
+      "<p>" + esc(dailyLine) + "</p>" +
+      "<p>" + esc(zoneLine) + "</p></article>";
+  }
+
+  function renderTraining(recent, summary) {
+    const recentNode = document.getElementById("training-recent");
+    const latestNode = document.getElementById("training-latest");
+    const summaryNode = document.getElementById("training-summary");
+    const online = recent && recent.available === true;
+    const rows = online && Array.isArray(recent.workouts) ? recent.workouts : [];
+    if (!online) {
+      setText("training-status", "Training UNKNOWN / OFFLINE");
+      setText("overview-training", "UNKNOWN / OFFLINE");
+    } else {
+      setText("training-status", "Fitbit read-only · " + rows.length + " recent");
+      setText("overview-training", rows.length ? (rows[0].name || rows[0].exercise_type || "Workout") : "No recent workouts");
+    }
+    if (latestNode) latestNode.innerHTML = rows.length ? workoutCard(rows[0]) : '<p class="hint">No recent workouts.</p>';
+    if (recentNode) {
+      recentNode.innerHTML = rows.length
+        ? rows.map(workoutCard).join("")
+        : '<p class="hint">No recent workouts.</p>';
+    }
+    if (summaryNode) {
+      summaryNode.innerHTML = summary && summary.available === true
+        ? summaryCard(summary)
+        : '<article class="card"><h2>7-day totals</h2><p>Unavailable</p></article>';
+    }
+  }
+
+  async function refreshWorkouts() {
+    try {
+      const responses = await Promise.all([
+        fetch("/api/workouts/recent?limit=8", { cache: "no-store" }),
+        fetch("/api/workouts/summary?days=7", { cache: "no-store" }),
+      ]);
+      const recent = responses[0].ok ? await responses[0].json() : null;
+      const summary = responses[1].ok ? await responses[1].json() : null;
+      renderTraining(recent, summary);
+    } catch (err) {
+      setText("training-status", "Training UNKNOWN / OFFLINE");
+      setText("overview-training", "UNKNOWN / OFFLINE");
+    }
+  }
+
   function showView(name) {
     if (!document.querySelectorAll) return;
     document.querySelectorAll(".view").forEach(function (view) {
@@ -1262,6 +1376,8 @@
 
   tick();
   setInterval(tick, REFRESH_MS);
+  refreshWorkouts();
+  setInterval(refreshWorkouts, WORKOUT_REFRESH_MS);
   if (typeof navigator !== "undefined" && navigator.serviceWorker && navigator.serviceWorker.register) {
     navigator.serviceWorker.register("/sw.js").catch(function () {});
   }
