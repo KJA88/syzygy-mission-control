@@ -62,7 +62,11 @@ class PwaTests(unittest.TestCase):
         self.assertIn('typeof navigator !== "undefined"', script)
         self.assertIn('fetch("/api/workouts/recent?limit=8", { cache: "no-store" })', script)
         self.assertIn('fetch("/api/workouts/summary?days=7", { cache: "no-store" })', script)
+        tick_body = script.split("async function tick()", 1)[1].split("const missionStop", 1)[0]
+        self.assertNotIn("refreshWorkouts", tick_body)
+        self.assertIn("const WORKOUT_REFRESH_MS = 10 * 60 * 1000;", script)
         self.assertIn("refreshWorkouts();", script)
+        self.assertIn("setInterval(refreshWorkouts, WORKOUT_REFRESH_MS);", script)
         self.assertNotIn("await refreshWorkouts()", script)
 
     def test_static_pwa_assets_use_explicit_types(self):

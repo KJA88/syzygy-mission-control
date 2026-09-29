@@ -5,6 +5,7 @@
   "use strict";
 
   const REFRESH_MS = 7000;
+  const WORKOUT_REFRESH_MS = 10 * 60 * 1000;
   const ACTIVITY_LIMIT = 20;
   const TZ = "America/Los_Angeles";
 
@@ -1351,7 +1352,6 @@
       refreshPerception();
       refreshHome();
       refreshMissions();
-      refreshWorkouts();
       els.fetchError.classList.add("hidden");
       els.refreshBadge.textContent = "refresh " + Math.round(REFRESH_MS / 1000) + "s";
       els.refreshBadge.className = "pill GREEN";
@@ -1376,6 +1376,8 @@
 
   tick();
   setInterval(tick, REFRESH_MS);
+  refreshWorkouts();
+  setInterval(refreshWorkouts, WORKOUT_REFRESH_MS);
   if (typeof navigator !== "undefined" && navigator.serviceWorker && navigator.serviceWorker.register) {
     navigator.serviceWorker.register("/sw.js").catch(function () {});
   }

@@ -10,10 +10,12 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from workouts.fitbit import (
+    CACHE_TTL_S,
     FitbitMcp,
     FitbitUnavailable,
     WorkoutSource,
     dedupe_exercises,
+    history_rows,
     normalize_exercise,
     unwrap_tool_result,
 )
@@ -129,6 +131,81 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(summary["daily_time_in_heart_rate_zone"]["duration_seconds"]["FAT_BURN"], 120)
         self.assertEqual(calls[0][0], "get_fitbit_exercise_history")
         self.assertNotIn("exercise_type", calls[0][1])
+
+    def test_daily_history_wrapper_reads_records_not_the_envelope(self):
+        envelope = {
+            "start_date": "2020-01-02",
+            "end_date": "2020-01-08",
+            "records": [
+                {
+                    "date": "2020-01-02",
+                    "active_zone_minutes": 20,
+                    "fat_burn_zone_minutes": 10,
+                    "cardio_zone_minutes": 8,
+                    "peak_zone_minutes": 2,
+                },
+                {
+                    "date": "2020-01-03",
+                    "active_zone_minutes": 5,
+                    "fat_burn_zone_minutes": 4,
+                    "cardio_zone_minutes": 1,
+                    "peak_zone_minutes": 0,
+                },
+            ],
+        }
+        zones = {
+            "start_date": "2020-01-02",
+            "end_date": "2020-01-08",
+            "records": [
+                {"date": "2020-01-02", "zones": [{"zone": "FAT_BURN", "duration_seconds": 120}]},
+                {"date": "2020-01-03", "zones": [{"zone": "FAT_BURN", "duration_seconds": 30}]},
+            ],
+        }
+        self.assertEqual(len(history_rows(envelope)), 2)
+        self.assertNotIn("start_date", history_rows(envelope)[0])
+
+        def call_tool(name, arguments):
+            if name == "get_fitbit_exercise_history":
+                return [sample()]
+            if name == "get_fitbit_active_zone_minutes_history":
+                return envelope
+            if name == "get_fitbit_time_in_heart_rate_zone_history":
+                return zones
+            raise AssertionError(name)
+
+        summary = WorkoutSource(call_tool, now=fixed_now).summary()
+        totals = summary["daily_active_zone_minutes"]
+        self.assertEqual(len(totals["days"]), 2)
+        self.assertEqual(totals["totals"]["active_zone_minutes"], 25)
+        self.assertEqual(totals["totals"]["fat_burn_zone_minutes"], 14)
+        self.assertEqual(summary["daily_time_in_heart_rate_zone"]["duration_seconds"]["FAT_BURN"], 150)
+        self.assertEqual([day["date"] for day in totals["days"]], ["2020-01-02", "2020-01-03"])
+
+    def test_summary_cache_blocks_repeat_history_calls_until_ttl(self):
+        clock = {"now": 0.0}
+        calls = []
+
+        def call_tool(name, arguments):
+            calls.append(name)
+            if name == "get_fitbit_exercise_history":
+                return [sample()]
+            if name == "get_fitbit_active_zone_minutes_history":
+                return {"start_date": "2020-01-02", "end_date": "2020-01-08", "records": []}
+            if name == "get_fitbit_time_in_heart_rate_zone_history":
+                return {"start_date": "2020-01-02", "end_date": "2020-01-08", "records": []}
+            raise AssertionError(name)
+
+        source = WorkoutSource(call_tool, now=fixed_now, clock=lambda: clock["now"])
+        first = source.summary()
+        second = source.summary()
+        self.assertEqual(first, second)
+        self.assertEqual(calls.count("get_fitbit_exercise_history"), 1)
+        self.assertEqual(calls.count("get_fitbit_active_zone_minutes_history"), 1)
+        clock["now"] = CACHE_TTL_S
+        source.summary()
+        self.assertEqual(calls.count("get_fitbit_exercise_history"), 2)
+        self.assertGreaterEqual(CACHE_TTL_S, 5 * 60)
+        self.assertLessEqual(CACHE_TTL_S, 15 * 60)
 
     def test_daily_rollup_failure_keeps_the_workout_list(self):
         def call_tool(name, arguments):

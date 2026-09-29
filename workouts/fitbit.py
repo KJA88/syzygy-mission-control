@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,7 @@ SOURCE = "fitbit"
 TIMEZONE = "America/Los_Angeles"
 DEFAULT_URL = "http://127.0.0.1:8010/mcp"
 WINDOW_DAYS = 7
+CACHE_TTL_S = 10 * 60
 ALLOWED_TOOLS = frozenset({
     "get_fitbit_exercises",
     "get_fitbit_exercise_history",
@@ -143,6 +145,17 @@ def _as_list(value):
     return []
 
 
+def history_rows(value):
+    """Daily history tools return {start_date, end_date, records:[...]}.
+
+    A bare list is accepted for tests. The wrapper itself is not a day row.
+    """
+    if isinstance(value, dict) and "records" in value:
+        rows = value.get("records")
+        return rows if isinstance(rows, list) else []
+    return _as_list(value)
+
+
 def _civil_date(start, zone):
     if not isinstance(start, str):
         return None
@@ -172,7 +185,7 @@ def _workout_totals(workouts):
 
 def normalize_daily_active_zone_minutes(records):
     days = []
-    for record in _as_list(records):
+    for record in history_rows(records):
         if not isinstance(record, dict):
             continue
         day = {"date": _text(record.get("date"))}
@@ -189,7 +202,7 @@ def normalize_daily_active_zone_minutes(records):
 
 def normalize_daily_time_in_zone(records):
     totals = {}
-    for record in _as_list(records):
+    for record in history_rows(records):
         if not isinstance(record, dict):
             continue
         for zone in record.get("zones") or []:
@@ -313,9 +326,24 @@ class FitbitMcp:
 
 
 class WorkoutSource:
-    def __init__(self, call_tool, now=None):
+    def __init__(self, call_tool, now=None, clock=None):
         self.call_tool = call_tool
         self.now = now or (lambda: datetime.now(_zone()))
+        self._clock = clock or time.monotonic
+        self._cache = {}
+
+    def _cached(self, key):
+        item = self._cache.get(key)
+        if item is None:
+            return None
+        expires, payload = item
+        if self._clock() >= expires:
+            return None
+        return payload
+
+    def _store(self, key, payload):
+        self._cache[key] = (self._clock() + CACHE_TTL_S, payload)
+        return payload
 
     def _zone_now(self):
         current = self.now()
@@ -333,13 +361,24 @@ class WorkoutSource:
         return {"available": False, "reason": "FITBIT_UNAVAILABLE", "source": SOURCE, "workouts": []}
 
     def recent(self, limit):
+        key = ("recent", limit)
+        cached = self._cached(key)
+        if cached is not None:
+            return cached
         try:
             records = self.call_tool("get_fitbit_exercises", {"limit": limit})
         except Exception:
-            return self._offline()
-        return {"available": True, "source": SOURCE, "workouts": dedupe_exercises(_as_list(records))[:limit]}
+            return self._store(key, self._offline())
+        payload = {"available": True, "source": SOURCE, "workouts": dedupe_exercises(_as_list(records))[:limit]}
+        return self._store(key, payload)
 
     def summary(self):
+        cached = self._cached("summary")
+        if cached is not None:
+            return cached
+        return self._store("summary", self._load_summary())
+
+    def _load_summary(self):
         start, end = self.window()
         try:
             records = self.call_tool("get_fitbit_exercise_history", {
