@@ -1,6 +1,8 @@
 # VERIFY_LIVE Inventory
 
-Machine-local and public MCP inventory was completed on 2026-09-23 for the Pi and Jetson. Mission Control V0.1 is now deployed and live on the LAN.
+This page is the 2026-09-23 inventory. It is not the current architecture. RoArm skills, Home Assistant, the Mission Engine, and `https://mission.syzygylab.net` are in scope now. See [ARCHITECTURE_CURRENT.md](ARCHITECTURE_CURRENT.md).
+
+Machine-local and public MCP inventory below was completed on 2026-09-23 for the Pi and Jetson.
 
 ## Verified live
 
@@ -105,6 +107,6 @@ Public MCP HTTP 403 without a dedicated Cloudflare Access identity is expected f
 
 ## Scope boundary
 
-RoArm was discovered during inventory but remains explicitly out of Mission Control V0.1 scope. Robot state, joints, motion controls, E-stop, autonomy, and robot MCP behavior are not part of this system.
+On 2026-09-23, RoArm was recorded as outside Mission Control V0.1. That boundary is historical. Named RoArm skills, Home Assistant writes, and missions are documented in [ARCHITECTURE_CURRENT.md](ARCHITECTURE_CURRENT.md) and [ROADMAP_STATUS.md](ROADMAP_STATUS.md).
 
 Unknown fields must remain unknown/`VERIFY_LIVE`; do not replace them with guesses.

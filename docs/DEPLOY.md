@@ -1,6 +1,8 @@
-# Guardian V0.1 deployment
+# Deployment
 
-Guardian V0.1 is deployed on the SYZYGY Pi/Jetson pair. Python 3.10+ and `python3-venv` are required. Run installation as the normal login user; the installer uses `/usr/bin/python3` so an activated Jetson vision environment cannot become Guardian's base interpreter.
+Guardian, Mission Control, and the Mission Engine run from this repository on the SYZYGY Pi/Jetson pair. Python 3.10+ and `python3-venv` are required. Run installation as the normal login user; the installer uses `/usr/bin/python3` so an activated Jetson vision environment cannot become Guardian's base interpreter.
+
+Current topology and ownership are in [ARCHITECTURE_CURRENT.md](ARCHITECTURE_CURRENT.md). Verify the live checkout, unit files, and ports before any restart. Subsystem repos and runtime directories are not all this git tree.
 
 ## Live topology
 
@@ -10,8 +12,12 @@ Guardian V0.1 is deployed on the SYZYGY Pi/Jetson pair. Python 3.10+ and `python
   - Mission Control UI: `http://192.168.1.18:9070/`
 - Jetson `Jetson` — `192.168.1.17`
   - local agent: `http://192.168.1.17:9071/health`
-- DHRAS production vision owner: `vision-hub.service`
-- RoArm is out of scope for Mission Control V0.1.
+- DHRAS production vision owner: `vision-hub.service` on the Jetson
+- RoArm command execution is a separate control service. Its transport stays in the RoArm repository. Mission Control reaches it through named skills.
+- Home Assistant Container files: `/home/KA_PI/syzygy-runtime/home-assistant/`
+- Home Assistant environment file: `/home/KA_PI/syzygy-runtime/home-assistant.env` (mode 0600, never commit or print it)
+- Home Assistant listens on port 8123 on the Pi. Do not publish it.
+- Home Assistant MCP: `127.0.0.1:8095` only (`syzygy-home-assistant-mcp.service`)
 
 All runtime service definitions, requiredness, endpoints, intervals, and verified MCP catalogs come from `config/services.yaml`.
 
@@ -44,7 +50,11 @@ sudo systemctl status syzygy-agent.service syzygy-guardian.service syzygy-missio
 .venv/bin/python -m guardian.inspect
 ```
 
-The Pi installer installs/restarts the Pi agent, Guardian, and Mission Control systemd units. The Jetson installer installs/restarts only the Jetson agent. Agents expose cached read-only `/health` JSON on the LAN and provide no command-execution API. Do not publish ports `9070` or `9071` through Cloudflare.
+The Pi installer installs/restarts the Pi agent, Guardian, and Mission Control systemd units. The Jetson installer installs/restarts only the Jetson agent. Agents expose cached read-only `/health` JSON on the LAN and provide no command-execution API.
+
+Do not publish ports `9070` or `9071` directly, and do not put Home Assistant, RoArm, Vision Hub, MQTT, or MCP ports on the Mission Control hostname. Remote Mission Control is only `https://mission.syzygylab.net` via Cloudflare Access and the Pi `cloudflared.service` tunnel to `http://127.0.0.1:9070`. That unit is separate from the `cloudflared-*-mcp.service` connectors.
+
+`scripts/install.sh` rewrites `syzygy-mission-control.service` without the Home Assistant `EnvironmentFile` that `systemd/syzygy-mission-control.service` contains. Do not run the installer over a production unit until that difference is checked. The unit description text may still say "V0.1 LAN read-only"; that string is not the capability boundary.
 
 ## Phase 1 health policy
 
@@ -82,10 +92,11 @@ Agents report CPU load, available RAM, free disk, and readable thermal sensors. 
 
 ## Mission Control UI
 
-Mission Control is LAN-only and read-only:
+LAN origin, also reached remotely through Access (see [REMOTE_ACCESS.md](REMOTE_ACCESS.md)):
 
 ```text
 http://192.168.1.18:9070/
+https://mission.syzygylab.net
 ```
 
 To install/enable the UI unit explicitly:

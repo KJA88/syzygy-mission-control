@@ -1,46 +1,70 @@
 # SYZYGY Mission Control
 
-Central observability and operations cockpit for the SYZYGY infrastructure.
+This repository is the Mission Control cockpit for SYZYGY, plus the Guardian
+observer, State Engine view, and Mission Engine that live with it.
 
-## Current scope
+SYZYGY is the umbrella system. Mission Control is the human and API entry
+point. It does not replace the subsystem that owns a device.
 
-V0.1 covers infrastructure only:
+## Current architecture
 
-- Raspberry Pi host health
-- Jetson host health
-- MCP services and tool catalogs
-- Cloudflare/public paths
-- authentication probe state
-- CPU/GPU/RAM/disk/temperature metrics
-- last tool invocation and failed calls
-- DHRAS / Vision Hub
-- TV MCP
-- Fitbit MCP
-- operator/activity events
+```text
+Phone / browser / operator
+            |
+            v
+     Mission Control  (Pi, local :9070 and Access-protected remote UI)
+       /          \
+ Guardian        Mission Engine
+ (observer)      (approved missions only)
+       |              |
+       +--------------+
+              |
+     RoArm control    Home Assistant    Vision Hub / DHRAS
+     (arm commands)   (home devices)    (cameras and perception)
+```
 
-**RoArm is intentionally out of scope for V0.1.** No robot state, joint state, motion, or E-stop logic belongs in this phase.
+Ownership:
 
-## Architecture
+- Guardian aggregates health. It does not command the arm, home devices, or cameras.
+- The State Engine publishes a read-only view of evidence and operational records.
+- The Mission Engine coordinates one approved physical mission at a time through existing adapters.
+- Vision Hub owns camera and perception acquisition.
+- Home Assistant owns home integrations and device behavior. Mission Control reaches it through a narrow adapter.
+- The RoArm control service owns arm command execution. Firmware, UDP, and serial transport stay in the RoArm repository.
+- The browser renders Mission Control. It does not hold Home Assistant, Cloudflare, or device secrets.
 
-Pi local agent + Jetson local agent -> Guardian aggregator -> versioned snapshot + append-only events -> Mission Control UI.
+Local UI: `http://192.168.1.18:9070/`
 
-The browser is a renderer only. It never probes infrastructure directly.
+Remote UI: `https://mission.syzygylab.net` through Cloudflare Access and the dedicated Mission Control tunnel to `http://127.0.0.1:9070` on the Pi. Port 9070 is not published directly.
 
-## Status model
+The Android shell is a standalone PWA named SYZYGY. See [remote access](docs/REMOTE_ACCESS.md).
 
-`GREEN` / `YELLOW` / `RED` / `UNKNOWN`
+## Documentation
 
-Overall health is reduced from components marked `required: true`. Missing or stale evidence blocks GREEN.
+- [Current architecture](docs/ARCHITECTURE_CURRENT.md)
+- [Roadmap status](docs/ROADMAP_STATUS.md)
+- [Mission Control](docs/MISSION_CONTROL.md)
+- [Deployment](docs/DEPLOY.md)
+- [Home Assistant](docs/HOME_ASSISTANT.md)
+- [Mission Engine](docs/MISSION_ENGINE.md)
+- [Remote access and PWA](docs/REMOTE_ACCESS.md)
+- [Polar / HRV probe](docs/HRV.md)
+- [State Engine](docs/STATE_ENGINE.md)
 
-## Run the backend
+`docs/ADR-SYZ-MC-001.md` and `docs/VERIFY_LIVE.md` record the 2026-09-23 V0.1 baseline. They are not the current scope.
 
-See [deployment instructions](docs/DEPLOY.md) for Pi/Jetson installation, foreground
-commands, tests, freshness handling, and the remaining live verification boundaries.
+## Tests
 
-The backend is implemented in `agents/` and `guardian/`. Tests are hardware-independent.
+```bash
+python -m unittest discover -s tests
+```
 
-## Evidence policy
+UI access checks, when Node is available:
 
-Repository-proven facts may be seeded into configuration. Anything that requires live verification remains marked `VERIFY_LIVE`. Do not replace verification markers with guesses.
+```bash
+node --test tests/test_ui_access.cjs
+```
 
-This repository was initialized from the Phase 1 planning handoff produced during the 2026-09-23 SYZYGY Mission Control design session. Some files are reconstructed from that handoff rather than copied byte-for-byte from Grok's private workspace.
+## Evidence
+
+Repository-proven facts may be seeded into configuration. Live checks stay labeled as observed only when a run recorded them. Do not treat a branch, a requested setting, or an old snapshot as the current system.

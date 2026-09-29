@@ -1,139 +1,65 @@
-# Mission Control V0.1 (LAN, read-only)
+# Mission Control
 
-Mission Control is the read-only SYZYGY cockpit served from the Pi at:
+Mission Control is the SYZYGY cockpit. It serves the UI and the HTTP API on the Pi.
 
 ```text
 http://192.168.1.18:9070/
+https://mission.syzygylab.net
 ```
 
-The browser renders Guardian outputs only. It never probes MCP, hosts, Cloudflare, or other services directly. The UI server reads:
+The remote hostname is Cloudflare Access plus the dedicated tunnel to `http://127.0.0.1:9070`. Do not publish port 9070 on the router. See [remote access](REMOTE_ACCESS.md) and [architecture](ARCHITECTURE_CURRENT.md).
 
-- `state/snapshot.json`
-- `state/events.jsonl`
+The browser renders Mission Control. It does not probe MCP servers, Home Assistant, or devices itself, and it does not hold those secrets. Live operational data comes from the network. The PWA service worker does not cache `/api/*` or control state.
 
-RoArm, motion, E-stop, and recovery controls are out of scope for V0.1.
+## UI
 
-## Architecture
+Overview, Perception, Robots, Devices, Home, Missions, Events, System, and Settings.
 
-```text
-Pi/Jetson local agents
-        |
-        v
-Guardian aggregator
-        |
-        +--> state/snapshot.json
-        +--> state/events.jsonl
-                    |
-                    v
-          ui/server.py :9070
-                    |
-                    v
-             browser renderer
-```
+Mission Control owns presentation and the orchestration entry points. Perception still belongs to Vision Hub. Arm commands still belong to the RoArm control service. Home writes still belong to the Home Assistant adapter and its allowlist.
 
-Statuses are GREEN / YELLOW / RED / UNKNOWN.
+## What the server reads and exposes
+
+- Guardian snapshot and events, with the heartbeat freshness rules below
+- Perception summaries from Vision Hub
+- RoArm skill status through the control owner
+- Home Assistant entities and the allowed On/Off actions
+- Mission Engine status, start, and stop
+
+STOP for a mission is an operational stop. It is not RoArm torque-off. Guardian does not issue those actions.
 
 ## Heartbeat freshness
 
-A saved snapshot cannot update itself after Guardian stops. Every consumer must apply the hard-stale guard. If `guardian.heartbeat_at` is missing or older than the configured threshold (default 120 seconds):
+A saved snapshot cannot update itself after Guardian stops. If `guardian.heartbeat_at` is missing or older than the configured threshold (default 120 seconds):
 
 - `system.status` becomes `unknown`
 - `system.reason` becomes `GUARDIAN_HEARTBEAT_STALE`
 - `guardian.status` becomes `unknown`
 - `guardian.class` becomes `SNAPSHOT_STALE`
 
-## Phase 1 health policy
+## Health rollup
 
-Required for overall GREEN:
+Required objects still decide system GREEN / YELLOW / RED / UNKNOWN. Optional hard failures stay visible and do not by themselves turn the system red. Optional soft warnings can still make a parent yellow.
 
-- Pi node
-- Jetson node
-- DHRAS vision service
-- DHRAS dashboard
-- DHRAS MCP
+Phase 1 required set:
+
+- Pi node and Jetson node
+- DHRAS vision service, dashboard, and MCP
 - TV MCP
-- backyard camera
-- indoor camera
+- backyard camera and indoor camera
 
-Optional hard failures remain visible but do not block GREEN. This includes the parked `frontyard` camera plus Fitbit, Polar H10, Git Audit MCPs, non-required public paths, portal state, and auth while the dedicated auth probe is off.
+Optional includes the parked `frontyard` camera, Fitbit, Polar H10, Git Audit MCPs, and auth while the dedicated auth probe is off. Home Assistant and a failed mission do not turn system health red.
 
-Optional soft integrity warnings such as catalog drift or unresolved conflicts still make the affected parent YELLOW.
+## systemd
 
-## Current live acceptance
-
-On 2026-09-23 the Pi passed 31 tests and reported:
-
-```text
-SYSTEM: green
-VISION: green required=True
-frontyard red required=False
-backyard green required=True
-indoor green required=True
-```
-
-At that check the Pi agent, Guardian, and Mission Control systemd services were all active.
-
-## systemd on Pi
-
-Mission Control should run under systemd so it survives reboot:
-
-```bash
-cd ~/syzygy-mission-control
-sudo cp systemd/syzygy-mission-control.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now syzygy-mission-control.service
-curl -sS http://127.0.0.1:9070/api/health
-```
-
-A fresh `bash scripts/install.sh pi` also installs/enables the Mission Control unit.
-
-Do not publish port `9070` through Cloudflare or public DNS.
-
-## Manual run
-
-For troubleshooting only:
-
-```bash
-cd ~/syzygy-mission-control
-bash scripts/run-mission-control.sh
-```
-
-Or explicitly:
-
-```bash
-python3 ui/server.py --host 0.0.0.0 --port 9070 --state-dir state --ui-dir ui
-```
-
-## Auto-refresh
-
-The browser polls `/api/snapshot` and `/api/events?limit=20` about every 7 seconds.
-
-## Offline fixture check
-
-```bash
-cd ~/syzygy-mission-control
-mkdir -p /tmp/mc-fixture-state
-cp tests/fixtures/snapshot.json /tmp/mc-fixture-state/snapshot.json
-cp tests/fixtures/events.jsonl /tmp/mc-fixture-state/events.jsonl
-python3 ui/server.py --host 127.0.0.1 --port 9070 --state-dir /tmp/mc-fixture-state --ui-dir ui
-```
-
-Then query:
-
-```bash
-curl -sS http://127.0.0.1:9070/api/snapshot | python3 -m json.tool
-```
+The installed unit is `syzygy-mission-control.service`, port 9070. The unit file in `systemd/` loads the Home Assistant environment file. `scripts/install.sh` writes a different unit that does not. Verify the installed unit before any reinstall or restart. See [deployment](DEPLOY.md).
 
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v
+python -m unittest discover -s tests
+node --test tests/test_ui_access.cjs
 ```
 
-## Out of scope for V0.1
+## Historical note
 
-- RoArm / joints / motion / E-stop
-- mutation or recovery buttons
-- direct browser-to-agent probing
-- direct browser-to-MCP probing
-- public exposure of the Mission Control UI
+`docs/ADR-SYZ-MC-001.md` accepted a LAN read-only V0.1 cockpit and left RoArm out of scope. That decision is the 2026-09-23 baseline. Phases 2–6, Home Assistant writes, RoArm skills, missions, and the Access-protected UI are in scope now.
