@@ -419,7 +419,6 @@ class PerceptionTests(unittest.TestCase):
         self.assertNotIn("/var/", encoded)
 
         client, calls = self.hub({
-            "http://hub/api/events/retain": response(200, {"ok": True}),
             "http://hub/api/events?limit=50": response(200, [
                 {"camera": "door", "class": "opened", "timestamp": "t2"},
             ]),
@@ -432,9 +431,9 @@ class PerceptionTests(unittest.TestCase):
         })
         listed = client.events()
         self.assertFalse(listed["events"][0]["snapshot"])
-        self.assertEqual(calls[0][0], "POST")
-        self.assertEqual(calls[0][1], "http://hub/api/events/retain")
-        self.assertIn(b'"max_records": 200', calls[0][2])
+        self.assertEqual(calls[0][0], "GET")
+        self.assertEqual(calls[0][1], "http://hub/api/events?limit=50")
+        self.assertNotIn("http://hub/api/events/retain", [call[1] for call in calls])
         self.assertEqual(client.archive_snapshots(["detections/backyard/a.jpg"])["paths"], ["archive/backyard/a.jpg"])
         self.assertEqual(client.archive_snapshots(["archive/backyard/b.jpg"])["reason"], "ARCHIVED_PROTECTED")
         self.assertEqual(client.delete_snapshots(["archive/backyard/b.jpg"])["reason"], "ARCHIVED_PROTECTED")

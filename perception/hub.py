@@ -73,7 +73,6 @@ def _last_event(events, camera_id):
 
 
 MEDIA_ROOTS = frozenset({"detections", "archive"})
-EVENT_RETAIN_MAX = 200
 
 
 def _safe_token(value):
@@ -294,11 +293,6 @@ class VisionHub:
 
     def events(self, limit=50):
         bounded = max(1, min(int(limit), 100))
-        self._request(
-            self.hub_base + "/api/events/retain",
-            method="POST",
-            payload={"max_records": EVENT_RETAIN_MAX},
-        )
         payload, error = self._json(self.hub_base + "/api/events?limit=%d" % bounded)
         if error:
             return {"available": False, "reason": error, "events": []}
