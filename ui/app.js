@@ -918,19 +918,28 @@
     }
   }
 
-  function renderDetections(payload, targetId) {
+  function askConfirm(message) {
+    const dialog = typeof globalThis === "undefined" ? null : globalThis["confirm"];
+    if (typeof dialog !== "function") return false;
+    return dialog(message) === true;
+  }
+
+  function renderRecentEvents(payload, targetId) {
     const node = document.getElementById(targetId);
     if (!node) return;
     const events = payload && Array.isArray(payload.events) ? payload.events : [];
     if (!payload || payload.available === false) {
-      node.innerHTML = "<p>Detections unavailable</p>";
+      node.innerHTML = "<p>Events unavailable</p>";
       return;
     }
     node.innerHTML = events.length
       ? events.map(function (event) {
-          return "<p>" + esc(event.timestamp || "") + " · " + esc(event.camera || "") + " · " + esc(event.class || "detection") + "</p>";
+          const confidence = typeof event.confidence === "number" ? String(event.confidence) : "none";
+          const attached = event.snapshot === true ? "Snapshot attached" : "No snapshot";
+          return "<p>" + esc(event.camera || "unknown source") + " · " + esc(event.class || "event") +
+            " · " + esc(event.timestamp || "no time") + " · " + esc(confidence) + " · " + attached + "</p>";
         }).join("")
-      : "<p>No detections</p>";
+      : "<p>No events</p>";
   }
 
   function renderSnapshots(payload) {
@@ -941,11 +950,127 @@
       node.textContent = "Snapshots unavailable";
       return;
     }
+    const signature = images.map(function (image) {
+      return (image.path || "") + ":" + (image.archived === true ? "1" : "0");
+    }).join(",");
+    if (node.getAttribute && node.getAttribute("data-snaps") === signature) return;
     node.innerHTML = images.map(function (image) {
       const src = "/api/perception/media?path=" + encodeURIComponent(image.path);
-      return '<article class="card"><h2>' + esc(image.camera || image.name || "snapshot") + "</h2>" +
+      const archived = image.archived === true;
+      return '<article class="card' + (archived ? " snapshot-archived" : "") + '"><h2>' +
+        esc(image.camera || image.name || "snapshot") + "</h2>" +
+        '<p class="snapshot-flag">' + (archived ? "Archived" : "Disposable") + "</p>" +
+        '<label><input type="checkbox" data-snapshot-path="' + esc(image.path) + '" data-archived="' +
+        (archived ? "yes" : "no") + '"> Select</label>' +
         '<img class="cam-stream" alt="' + esc(image.name || "snapshot") + '" src="' + src + '"></article>';
     }).join("") || "<p>No snapshots</p>";
+    if (node.setAttribute) node.setAttribute("data-snaps", signature);
+  }
+
+  function selectedSnapshots() {
+    const node = document.getElementById("snapshot-grid");
+    if (!node || typeof node.querySelectorAll !== "function") return [];
+    const picked = [];
+    node.querySelectorAll('input[type="checkbox"]').forEach(function (box) {
+      if (!box.checked) return;
+      const path = box.getAttribute("data-snapshot-path");
+      if (!path) return;
+      picked.push({path: path, archived: box.getAttribute("data-archived") === "yes"});
+    });
+    return picked;
+  }
+
+  async function postSnapshotAction(url, body) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body || {}),
+    });
+    const payload = await response.json();
+    setText("snapshot-status", (payload && payload.reason) || "requested");
+    refreshPerception();
+    return payload;
+  }
+
+  function bindSnapshotActions() {
+    const selectAll = document.getElementById("snapshot-select-all");
+    if (selectAll && selectAll.addEventListener) {
+      selectAll.addEventListener("click", function () {
+        const node = document.getElementById("snapshot-grid");
+        if (!node || typeof node.querySelectorAll !== "function") return;
+        node.querySelectorAll('input[type="checkbox"]').forEach(function (box) { box.checked = true; });
+      });
+    }
+    const archive = document.getElementById("snapshot-archive");
+    if (archive && archive.addEventListener) {
+      archive.addEventListener("click", function () {
+        const paths = selectedSnapshots().filter(function (item) { return !item.archived; }).map(function (item) { return item.path; });
+        if (!paths.length) {
+          setText("snapshot-status", "Select unarchived snapshots");
+          return;
+        }
+        const noun = paths.length === 1 ? "snapshot" : "snapshots";
+        if (!askConfirm("Archive " + paths.length + " " + noun + "? They stay stored and are skipped by clear and delete.")) return;
+        postSnapshotAction("/api/perception/snapshots/archive", {paths: paths});
+      });
+    }
+    const remove = document.getElementById("snapshot-delete");
+    if (remove && remove.addEventListener) {
+      remove.addEventListener("click", function () {
+        const picked = selectedSnapshots();
+        const paths = picked.filter(function (item) { return !item.archived; }).map(function (item) { return item.path; });
+        if (!paths.length) {
+          setText("snapshot-status", "Archived snapshots are protected");
+          return;
+        }
+        const noun = paths.length === 1 ? "snapshot" : "snapshots";
+        if (!askConfirm("Delete " + paths.length + " unarchived " + noun + "? This removes those images. Archived snapshots and the event log stay.")) return;
+        postSnapshotAction("/api/perception/snapshots/delete", {paths: paths});
+      });
+    }
+    const clearShots = document.getElementById("snapshot-clear");
+    if (clearShots && clearShots.addEventListener) {
+      clearShots.addEventListener("click", function () {
+        if (!askConfirm("Clear all unarchived snapshots? Archived snapshots and the event log will be kept.")) return;
+        postSnapshotAction("/api/perception/snapshots/clear-unarchived", {});
+      });
+    }
+    const download = document.getElementById("snapshot-download");
+    if (download && download.addEventListener) {
+      download.addEventListener("click", function () {
+        const paths = selectedSnapshots().map(function (item) { return item.path; });
+        if (!paths.length) {
+          setText("snapshot-status", "Select snapshots");
+          return;
+        }
+        fetch("/api/perception/snapshots/download", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({paths: paths}),
+        }).then(function (response) {
+          if (!response.ok || typeof response.blob !== "function") {
+            setText("snapshot-status", "DOWNLOAD_UNAVAILABLE");
+            return null;
+          }
+          return response.blob();
+        }).then(function (blob) {
+          if (!blob || typeof URL === "undefined" || typeof URL.createObjectURL !== "function" || typeof document.createElement !== "function") return;
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = "snapshots.zip";
+          link.click();
+        }).catch(function () {
+          setText("snapshot-status", "DOWNLOAD_UNAVAILABLE");
+        });
+      });
+    }
+    const clearEvents = document.getElementById("events-clear");
+    if (clearEvents && clearEvents.addEventListener) {
+      clearEvents.addEventListener("click", function () {
+        if (!askConfirm("Clear the recent event log? Snapshot images, including archived snapshots, will not be deleted.")) return;
+        postSnapshotAction("/api/perception/events/clear", {});
+      });
+    }
   }
 
   const USEFUL_SENSOR_CLASS = {
@@ -1169,7 +1294,7 @@
         fetch("/api/perception/cameras", { cache: "no-store" }),
         fetch("/api/devices", { cache: "no-store" }),
         fetch("/api/perception/events?limit=30", { cache: "no-store" }),
-        fetch("/api/perception/snapshots?limit=12", { cache: "no-store" }),
+        fetch("/api/perception/snapshots?limit=40", { cache: "no-store" }),
       ]);
       const payloads = [];
       for (let index = 0; index < responses.length; index += 1) {
@@ -1177,8 +1302,8 @@
       }
       renderCameras(payloads[0]);
       renderDevices(payloads[1]);
-      renderDetections(payloads[2], "detection-list");
-      renderDetections(payloads[2], "event-detections");
+      renderRecentEvents(payloads[2], "recent-events");
+      renderRecentEvents(payloads[2], "event-detections");
       renderSnapshots(payloads[3]);
     } catch (err) {
       setText("perception-status", "Perception UNKNOWN / OFFLINE");
@@ -1449,6 +1574,7 @@
     });
   }
 
+  bindSnapshotActions();
   tick();
   setInterval(tick, REFRESH_MS);
   refreshWorkouts();

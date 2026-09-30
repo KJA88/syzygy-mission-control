@@ -63,20 +63,22 @@
           <h1>Perception</h1>
           <p id="perception-status" class="hint">Waiting for Vision Hub</p>
         </div>
-        <div class="subtabs" role="tablist">
-          <button type="button" class="subtab active" data-tab="cameras">Cameras</button>
-          <button type="button" class="subtab" data-tab="detections">Detections</button>
-          <button type="button" class="subtab" data-tab="snapshots">Snapshots</button>
+        <div id="cam-grid" class="cam-grid"></div>
+        <h2>Snapshots / Gallery</h2>
+        <div class="home-actions" id="snapshot-actions">
+          <button type="button" id="snapshot-select-all">Select all</button>
+          <button type="button" id="snapshot-archive">Archive selected</button>
+          <button type="button" id="snapshot-delete">Delete selected</button>
+          <button type="button" id="snapshot-clear">Clear unarchived snapshots</button>
+          <button type="button" id="snapshot-download">Download selected</button>
         </div>
-        <div id="tab-cameras" class="subview active">
-          <div id="cam-grid" class="cam-grid"></div>
+        <p id="snapshot-status" class="hint"></p>
+        <div id="snapshot-grid" class="cam-grid"></div>
+        <h2>Recent events</h2>
+        <div class="home-actions">
+          <button type="button" id="events-clear">Clear events</button>
         </div>
-        <div id="tab-detections" class="subview">
-          <div id="detection-list" class="stack"></div>
-        </div>
-        <div id="tab-snapshots" class="subview">
-          <div id="snapshot-grid" class="cam-grid"></div>
-        </div>
+        <div id="recent-events" class="stack"></div>
       </section>
 
       <section id="view-robots" class="view">
