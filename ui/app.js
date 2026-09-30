@@ -948,39 +948,93 @@
     }).join("") || "<p>No snapshots</p>";
   }
 
+  const USEFUL_SENSOR_CLASS = {
+    temperature: true, humidity: true, illuminance: true, power: true, energy: true,
+    battery: true, voltage: true, current: true, pressure: true, moisture: true,
+    aqi: true, carbon_dioxide: true, carbon_monoxide: true, pm25: true, pm10: true, pm1: true,
+  };
+  const USEFUL_BINARY_CLASS = {
+    door: true, window: true, opening: true, motion: true, occupancy: true, presence: true,
+    moisture: true, smoke: true, gas: true, carbon_monoxide: true, safety: true,
+    vibration: true, sound: true, light: true, heat: true, cold: true, moving: true,
+    garage_door: true, lock: true, tamper: true,
+  };
+  const homePending = {};
+
+  function usefulHomeEntity(entity) {
+    if (!entity) return false;
+    if (entity.domain === "sensor") return !!(entity.unit || USEFUL_SENSOR_CLASS[entity.device_class]);
+    if (entity.domain === "binary_sensor") return !!USEFUL_BINARY_CLASS[entity.device_class];
+    return false;
+  }
+
+  function homeIndicator(entity) {
+    const state = String(entity && entity.state || "").toLowerCase();
+    if (state === "unavailable") return "UNAVAILABLE";
+    if (state === "on") return "ON";
+    if (state === "off") return "OFF";
+    return "UNKNOWN";
+  }
+
+  function homePendingLabel(action) {
+    if (action === "turn_on") return "Turning on…";
+    if (action === "turn_off") return "Turning off…";
+    return "Updating…";
+  }
+
   function homeCard(entity) {
     const unit = entity.unit ? " " + entity.unit : "";
-    const presence = entity.available ? "online" : "offline";
     return '<article class="card"><h2>' + esc(entity.name) + "</h2>" +
-      "<p>" + esc(entity.state) + esc(unit) + " · " + presence + "</p>" +
+      "<p>" + esc(entity.state) + esc(unit) + "</p>" +
       "<p>" + esc(entity.entity_id) + "</p></article>";
   }
 
   function homeControl(entity) {
+    const pending = homePending[entity.entity_id];
     const actions = [];
+    const disabled = pending ? " disabled" : "";
     if (entity.available && entity.writable) {
       if ((entity.capabilities || []).indexOf("turn_on") >= 0) {
-        actions.push('<button type="button" data-home-action="turn_on" data-entity="' + esc(entity.entity_id) + '">On</button>');
+        actions.push('<button type="button" data-home-action="turn_on" data-entity="' + esc(entity.entity_id) + '"' + disabled + '>On</button>');
       }
       if ((entity.capabilities || []).indexOf("turn_off") >= 0) {
-        actions.push('<button type="button" data-home-action="turn_off" data-entity="' + esc(entity.entity_id) + '">Off</button>');
+        actions.push('<button type="button" data-home-action="turn_off" data-entity="' + esc(entity.entity_id) + '"' + disabled + '>Off</button>');
       }
       if ((entity.capabilities || []).indexOf("brightness") >= 0) {
         actions.push('<label>Brightness<input type="number" min="0" max="255" data-home-brightness="' + esc(entity.entity_id) + '"></label>');
-        actions.push('<button type="button" data-home-action="set_brightness" data-entity="' + esc(entity.entity_id) + '">Set</button>');
+        actions.push('<button type="button" data-home-action="set_brightness" data-entity="' + esc(entity.entity_id) + '"' + disabled + '>Set</button>');
       }
     }
     return '<article class="card" data-home-card="' + esc(entity.entity_id) + '"><h2>' + esc(entity.name) + "</h2>" +
-      '<p class="home-state">' + esc(entity.state) + " · " + (entity.available ? "online" : "offline") + "</p>" +
+      '<p class="home-state">' + esc(pending || homeIndicator(entity)) + "</p>" +
       '<div class="home-actions">' + actions.join("") + "</div></article>";
+  }
+
+  function homeCardNode(entityId) {
+    const controls = document.getElementById("home-controls");
+    if (!controls || typeof controls.querySelector !== "function") return null;
+    return controls.querySelector('[data-home-card="' + entityId + '"]');
+  }
+
+  function paintHomeCard(entityId, label, pending) {
+    const card = homeCardNode(entityId);
+    if (!card || typeof card.querySelector !== "function") return;
+    const state = card.querySelector(".home-state");
+    if (state) state.textContent = label;
+    if (typeof card.querySelectorAll !== "function") return;
+    card.querySelectorAll("button").forEach(function (button) {
+      button.disabled = !!pending;
+    });
   }
 
   function bindHome(node) {
     if (!node || typeof node.querySelectorAll !== "function") return;
     node.querySelectorAll("[data-home-action]").forEach(function (button) {
       button.addEventListener("click", function () {
+        if (button.disabled) return;
         const entity = button.getAttribute("data-entity");
         const action = button.getAttribute("data-home-action");
+        if (homePending[entity]) return;
         let brightness = null;
         if (action === "set_brightness") {
           const input = node.querySelector('[data-home-brightness="' + entity + '"]');
@@ -997,8 +1051,12 @@
   }
 
   async function postHome(entity, action, brightness) {
+    if (!entity || homePending[entity]) return;
     const body = { entity_id: entity, action: action };
     if (brightness != null) body.brightness = brightness;
+    homePending[entity] = homePendingLabel(action);
+    paintHomeCard(entity, homePending[entity], true);
+    let reason = null;
     try {
       const response = await fetch("/api/home/action", {
         method: "POST",
@@ -1006,10 +1064,17 @@
         body: JSON.stringify(body),
       });
       const payload = await response.json();
-      setText("home-status", payload && payload.accepted ? "requested" : ((payload && payload.reason) || "rejected"));
+      if (!payload || payload.accepted !== true) reason = (payload && payload.reason) || "rejected";
     } catch (err) {
-      setText("home-status", "Home UNKNOWN / OFFLINE");
+      reason = "Home UNKNOWN / OFFLINE";
     }
+    delete homePending[entity];
+    const view = await refreshHome();
+    if (!view || view.available !== true) {
+      paintHomeCard(entity, "UNKNOWN", false);
+      if (!reason) reason = "Home UNKNOWN / OFFLINE";
+    }
+    if (reason) setText("home-status", reason);
   }
 
   function renderHome(view) {
@@ -1017,7 +1082,7 @@
     if (!view || view.available !== true) {
       setText("home-status", "Home UNKNOWN / OFFLINE" + (view && view.reason ? " · " + view.reason : ""));
       setText("overview-home", "UNKNOWN / OFFLINE");
-      ["home-counts", "home-sensors", "home-binary", "home-controls"].forEach(function (id) {
+      ["home-counts", "home-useful", "home-other-list", "home-controls"].forEach(function (id) {
         const node = document.getElementById(id);
         if (node) node.innerHTML = "";
       });
@@ -1037,10 +1102,14 @@
         return "<p>" + esc(domain) + " · " + esc(tally[domain]) + "</p>";
       }).join("") || "<p>No exposed entities</p>";
     }
-    const sensors = document.getElementById("home-sensors");
-    const binary = document.getElementById("home-binary");
-    if (sensors) sensors.innerHTML = entities.filter(function (entity) { return entity.domain === "sensor"; }).map(homeCard).join("") || "<p>None</p>";
-    if (binary) binary.innerHTML = entities.filter(function (entity) { return entity.domain === "binary_sensor"; }).map(homeCard).join("") || "<p>None</p>";
+    const usefulNode = document.getElementById("home-useful");
+    const otherNode = document.getElementById("home-other-list");
+    const useful = entities.filter(usefulHomeEntity);
+    const other = entities.filter(function (entity) {
+      return entity.domain !== "switch" && entity.domain !== "light" && !usefulHomeEntity(entity);
+    });
+    if (usefulNode) usefulNode.innerHTML = useful.map(homeCard).join("") || "<p>None</p>";
+    if (otherNode) otherNode.innerHTML = other.map(homeCard).join("") || "<p>None</p>";
     const controls = document.getElementById("home-controls");
     if (!controls) return;
     const controllable = entities.filter(function (entity) {
@@ -1059,8 +1128,12 @@
           ? controls.querySelector('[data-home-card="' + entity.entity_id + '"]')
           : null;
         if (!card || typeof card.querySelector !== "function") return;
+        const pending = homePending[entity.entity_id];
         const state = card.querySelector(".home-state");
-        if (state) state.textContent = (entity.state || "unknown") + " · " + (entity.available ? "online" : "offline");
+        if (state) state.textContent = pending || homeIndicator(entity);
+        if (!pending && typeof card.querySelectorAll === "function") {
+          card.querySelectorAll("button").forEach(function (button) { button.disabled = false; });
+        }
       });
     }
   }
@@ -1070,9 +1143,11 @@
       const response = await fetch("/api/home/entities", { cache: "no-store" });
       const view = response.ok ? await response.json() : null;
       renderHome(view);
+      return view;
     } catch (err) {
       setText("home-status", "Home UNKNOWN / OFFLINE");
       setText("overview-home", "UNKNOWN / OFFLINE");
+      return null;
     }
   }
 
