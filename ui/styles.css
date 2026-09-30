@@ -125,6 +125,9 @@ body {
 }
 .cards-row { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .cards-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.home-state { font-weight: 700; letter-spacing: 0.04em; }
+.home-other { margin-top: 1rem; }
+.home-other summary { cursor: pointer; padding: 0.45rem 0; font-size: 1rem; }
 
 .entity {
   background: var(--panel-2);
