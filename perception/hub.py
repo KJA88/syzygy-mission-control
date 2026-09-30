@@ -72,16 +72,42 @@ def _last_event(events, camera_id):
     return None
 
 
+MEDIA_ROOTS = frozenset({"detections", "archive"})
+EVENT_RETAIN_MAX = 200
+
+
+def _safe_token(value):
+    return bool(value) and all(char.isalnum() or char in "_-" for char in value)
+
+
 def _safe_media_path(value):
+    """Relative gallery key only. Absolute and parent paths are rejected."""
     text = _text(value)
     if not text or text.startswith("/") or "\\" in text or ".." in text.split("/"):
         return None
-    parts = text.split("/")
-    if len(parts) < 2 or parts[0] != "detections":
+    parts = [part for part in text.split("/") if part]
+    if len(parts) < 3 or parts[0] not in MEDIA_ROOTS:
         return None
-    if not text.endswith(".jpg"):
+    if not all(_safe_token(part) for part in parts[1:-1]):
         return None
-    return text
+    name = parts[-1]
+    if not name.endswith(".jpg"):
+        return None
+    if not _safe_token(name[:-4]):
+        return None
+    return "/".join(parts)
+
+
+def _snapshot_paths(paths):
+    if not isinstance(paths, list) or not paths or len(paths) > 40:
+        return None
+    cleaned = []
+    for item in paths:
+        safe = _safe_media_path(item)
+        if safe is None or safe in cleaned:
+            return None
+        cleaned.append(safe)
+    return cleaned
 
 
 def public_stream_url(camera_id):
@@ -180,12 +206,14 @@ def public_events(events, limit=50):
     for event in events[:limit]:
         if not isinstance(event, dict):
             continue
+        image = _safe_media_path(event.get("image"))
         cleaned.append({
             "camera": _text(event.get("camera")),
             "class": _text(event.get("class")),
             "confidence": event.get("confidence") if isinstance(event.get("confidence"), (int, float)) and not isinstance(event.get("confidence"), bool) else None,
             "timestamp": _text(event.get("timestamp")),
-            "image": _safe_media_path(event.get("image")),
+            "image": image,
+            "snapshot": image is not None,
         })
     return cleaned
 
@@ -205,6 +233,7 @@ def public_gallery(images, limit=40):
             "name": _text(image.get("name")),
             "path": path,
             "timestamp": _text(image.get("ts")),
+            "archived": path.startswith("archive/") or image.get("archived") is True,
         })
     return cleaned
 
@@ -264,10 +293,82 @@ class VisionHub:
         )
 
     def events(self, limit=50):
-        payload, error = self._json(self.hub_base + "/api/events?limit=%d" % int(limit))
+        bounded = max(1, min(int(limit), 100))
+        self._request(
+            self.hub_base + "/api/events/retain",
+            method="POST",
+            payload={"max_records": EVENT_RETAIN_MAX},
+        )
+        payload, error = self._json(self.hub_base + "/api/events?limit=%d" % bounded)
         if error:
             return {"available": False, "reason": error, "events": []}
-        return {"available": True, "reason": None, "events": public_events(payload, limit)}
+        return {"available": True, "reason": None, "events": public_events(payload, bounded)}
+
+    def _manage(self, url, payload):
+        status, _header, body, error = self._request(url, method="POST", payload=payload)
+        if error or status is None or status >= 400:
+            return {"accepted": False, "reason": error or "VISION_HUB_HTTP"}
+        try:
+            parsed = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeError, ValueError):
+            return {"accepted": False, "reason": "VISION_HUB_MALFORMED"}
+        if not isinstance(parsed, dict) or parsed.get("ok") is False:
+            return {"accepted": False, "reason": "VISION_HUB_HTTP"}
+        moved = []
+        for item in parsed.get("paths") or []:
+            safe = _safe_media_path(item)
+            if safe:
+                moved.append(safe)
+        return {"accepted": True, "reason": "UPDATED", "paths": moved}
+
+    def archive_snapshots(self, paths):
+        cleaned = _snapshot_paths(paths)
+        if cleaned is None:
+            return {"accepted": False, "reason": "MALFORMED_PARAMETERS"}
+        if any(path.startswith("archive/") for path in cleaned):
+            return {"accepted": False, "reason": "ARCHIVED_PROTECTED"}
+        result = self._manage(self.hub_base + "/api/gallery/archive", {"paths": cleaned})
+        if result.get("accepted"):
+            result["reason"] = "ARCHIVED"
+        return result
+
+    def delete_snapshots(self, paths):
+        cleaned = _snapshot_paths(paths)
+        if cleaned is None:
+            return {"accepted": False, "reason": "MALFORMED_PARAMETERS"}
+        if any(path.startswith("archive/") for path in cleaned):
+            return {"accepted": False, "reason": "ARCHIVED_PROTECTED"}
+        result = self._manage(self.hub_base + "/api/gallery/delete", {"paths": cleaned})
+        if result.get("accepted"):
+            result["reason"] = "DELETED"
+        return result
+
+    def clear_unarchived_snapshots(self):
+        result = self._manage(self.hub_base + "/api/gallery/clear-unarchived", {})
+        if result.get("accepted"):
+            result["reason"] = "UNARCHIVED_CLEARED"
+        return result
+
+    def clear_events(self):
+        result = self._manage(self.hub_base + "/api/events/clear", {})
+        if result.get("accepted"):
+            result["reason"] = "EVENTS_CLEARED"
+        return result
+
+    def download_snapshots(self, paths):
+        import io
+        import zipfile
+        cleaned = _snapshot_paths(paths)
+        if cleaned is None:
+            return None, "MALFORMED_PARAMETERS"
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for path in cleaned:
+                body, reason = self.media(path)
+                if body is None:
+                    return None, reason
+                archive.writestr(path, body)
+        return buffer.getvalue(), None
 
     def snapshots(self, camera_id=None, limit=40):
         url = self.hub_base + "/api/gallery?limit=%d" % int(limit)

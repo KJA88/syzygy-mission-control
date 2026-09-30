@@ -389,6 +389,37 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 if vision is None:
                     return self._json(200, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
                 return self._json(200, vision.ptz(payload.get("camera"), payload.get("dir")))
+            if parsed.path == "/api/perception/snapshots/archive":
+                if vision is None:
+                    return self._json(200, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
+                return self._json(200, vision.archive_snapshots(payload.get("paths")))
+            if parsed.path == "/api/perception/snapshots/delete":
+                if vision is None:
+                    return self._json(200, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
+                return self._json(200, vision.delete_snapshots(payload.get("paths")))
+            if parsed.path == "/api/perception/snapshots/clear-unarchived":
+                if vision is None:
+                    return self._json(200, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
+                return self._json(200, vision.clear_unarchived_snapshots())
+            if parsed.path == "/api/perception/snapshots/download":
+                if vision is None:
+                    return self._json(503, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
+                body, reason = vision.download_snapshots(payload.get("paths"))
+                if body is None:
+                    return self._json(400, {"accepted": False, "reason": reason})
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Disposition", "attachment; filename=\"snapshots.zip\"")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if parsed.path == "/api/perception/events/clear":
+                if vision is None:
+                    return self._json(200, {"accepted": False, "reason": "VISION_HUB_UNAVAILABLE"})
+                return self._json(200, vision.clear_events())
             if parsed.path == "/api/home/action":
                 if home is None:
                     return self._json(200, {"accepted": False, "reason": "HA_UNCONFIGURED"})

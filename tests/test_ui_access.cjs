@@ -347,3 +347,112 @@ test('failed home action shows the reason and the confirmed state', async () => 
   assert.equal(home.elements['home-status'].textContent, 'WRITE_REJECTED');
   assert.equal(home.controls.cards['switch.porch'].state.textContent, 'OFF');
 });
+
+test('perception keeps live feeds and manages snapshots apart from events', async () => {
+  const page = fs.readFileSync(path.join(__dirname, '../ui/index.html'), 'utf8');
+  const feeds = page.indexOf('id="cam-grid"');
+  const gallery = page.indexOf('id="snapshot-grid"');
+  const events = page.indexOf('id="recent-events"');
+  assert.ok(feeds > 0 && gallery > feeds && events > gallery);
+  assert.match(page, /Snapshots \/ Gallery/);
+  assert.match(page, /Recent events/);
+  assert.match(page, /Clear events/);
+  assert.match(code, /esc\(camera\.stream_url\)/);
+  const elements = {};
+  const posts = [];
+  const confirms = [];
+  let allow = false;
+  function control() {
+    const node = {listeners: {}, addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }};
+    node.click = () => (node.listeners.click || []).forEach(fn => fn());
+    return node;
+  }
+  const buttons = {
+    'snapshot-select-all': control(),
+    'snapshot-archive': control(),
+    'snapshot-delete': control(),
+    'snapshot-clear': control(),
+    'snapshot-download': control(),
+    'events-clear': control(),
+  };
+  const grid = {
+    attributes: {}, boxes: [], _html: '',
+    setAttribute(name, value) { this.attributes[name] = String(value); },
+    getAttribute(name) { return this.attributes[name] == null ? null : this.attributes[name]; },
+    querySelectorAll(sel) { return sel === 'input[type="checkbox"]' ? this.boxes.slice() : []; },
+  };
+  Object.defineProperty(grid, 'innerHTML', {
+    get() { return grid._html; },
+    set(html) {
+      grid._html = String(html);
+      grid.boxes = [];
+      const re = /<input type="checkbox"([^>]*)>/g;
+      let match;
+      while ((match = re.exec(html))) {
+        const attrs = match[1];
+        grid.boxes.push({
+          checked: false,
+          getAttribute(name) {
+            const found = new RegExp(name + '="([^"]*)"').exec(attrs);
+            return found ? found[1] : null;
+          },
+        });
+      }
+    },
+  });
+  const context = {
+    Date, Intl, Map, Number, String, Object, Array, Promise, confirm(message) {
+      confirms.push(message);
+      return allow;
+    },
+    document: {getElementById(id) {
+      if (buttons[id]) return buttons[id];
+      if (id === 'snapshot-grid') return grid;
+      return elements[id] ||= {textContent: '', innerHTML: '', classList: {add() {}, remove() {}}};
+    }},
+    fetch: async (url, options) => {
+      if (options && options.method === 'POST') posts.push({url, body: JSON.parse(options.body)});
+      if (url === '/api/perception/events?limit=30') {
+        return {ok: true, json: async () => ({available: true, events: [
+          {camera: 'backyard', class: 'person', confidence: 0.5, timestamp: 't1', snapshot: true},
+          {camera: 'door', class: 'opened', confidence: 1, timestamp: 't2', snapshot: false},
+        ]})};
+      }
+      if (url === '/api/perception/snapshots?limit=40') {
+        return {ok: true, json: async () => ({available: true, snapshots: [
+          {camera: 'backyard', name: 'a.jpg', path: 'detections/backyard/a.jpg', archived: false, timestamp: 't1'},
+          {camera: 'backyard', name: 'b.jpg', path: 'archive/backyard/b.jpg', archived: true, timestamp: 't0'},
+        ]})};
+      }
+      return {ok: true, json: async () => url === '/api/snapshot' ? snapshot() : {events: []}};
+    },
+    setInterval() {},
+  };
+  vm.runInNewContext(code, context);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(elements['recent-events'].innerHTML, /backyard · person · t1 · 0\.5 · Snapshot attached/);
+  assert.match(elements['recent-events'].innerHTML, /door · opened · t2 · 1 · No snapshot/);
+  assert.match(grid.innerHTML, /Archived/);
+  assert.match(grid.innerHTML, /Disposable/);
+  assert.doesNotMatch(grid.innerHTML, /192\.168|rtsp:\/\/|\/home\//);
+  buttons['snapshot-select-all'].click();
+  assert.equal(grid.boxes.every(box => box.checked), true);
+  allow = false;
+  buttons['snapshot-delete'].click();
+  assert.match(confirms.at(-1), /Delete 1 unarchived snapshot/);
+  assert.match(confirms.at(-1), /Archived snapshots and the event log stay/);
+  assert.equal(posts.length, 0);
+  allow = true;
+  buttons['snapshot-delete'].click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(posts[0], {
+    url: '/api/perception/snapshots/delete',
+    body: {paths: ['detections/backyard/a.jpg']},
+  });
+  buttons['events-clear'].click();
+  assert.match(confirms.at(-1), /Clear the recent event log/);
+  assert.match(confirms.at(-1), /including archived snapshots, will not be deleted/);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(posts.at(-1).url, '/api/perception/events/clear');
+});

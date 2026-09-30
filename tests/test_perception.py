@@ -1,9 +1,11 @@
 """Offline Vision Hub adapter. No Jetson connection."""
 import importlib.util
+import io
 import json
 import threading
 import unittest
 import urllib.request
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -392,6 +394,66 @@ class PerceptionTests(unittest.TestCase):
             httpd.server_close()
             upstream.shutdown()
             upstream.server_close()
+
+    def test_snapshot_archive_is_separate_from_events(self):
+        from perception.hub import public_events, public_gallery
+        events = public_events([
+            {"camera": "backyard", "class": "person", "confidence": 0.5, "timestamp": "t", "image": "detections/backyard/a.jpg"},
+            {"camera": "door", "class": "opened", "confidence": 1, "timestamp": "t2"},
+            {"camera": "x", "class": "y", "image": "/home/KA_PI/secret.jpg"},
+        ])
+        self.assertTrue(events[0]["snapshot"])
+        self.assertFalse(events[1]["snapshot"])
+        self.assertIsNone(events[2]["image"])
+        self.assertFalse(events[2]["snapshot"])
+        gallery = public_gallery([
+            {"path": "detections/backyard/a.jpg", "camera": "backyard", "name": "a.jpg", "ts": "t"},
+            {"path": "archive/backyard/b.jpg", "camera": "backyard", "name": "b.jpg", "ts": "t"},
+            {"path": "rtsp://camera", "camera": "backyard", "name": "nope"},
+            {"path": "/var/lib/a.jpg", "camera": "backyard"},
+        ])
+        self.assertEqual([item["archived"] for item in gallery], [False, True])
+        encoded = json.dumps(gallery + events)
+        self.assertNotIn("rtsp://", encoded)
+        self.assertNotIn("/home/", encoded)
+        self.assertNotIn("/var/", encoded)
+
+        client, calls = self.hub({
+            "http://hub/api/events/retain": response(200, {"ok": True}),
+            "http://hub/api/events?limit=50": response(200, [
+                {"camera": "door", "class": "opened", "timestamp": "t2"},
+            ]),
+            "http://hub/api/gallery/archive": response(200, {"ok": True, "paths": ["archive/backyard/a.jpg"]}),
+            "http://hub/api/gallery/delete": response(200, {"ok": True}),
+            "http://hub/api/gallery/clear-unarchived": response(200, {"ok": True}),
+            "http://hub/api/events/clear": response(200, {"ok": True}),
+            "http://hub/snapshots/detections/backyard/a.jpg": response(200, b"\xff\xd8jpeg", "image/jpeg"),
+            "http://hub/snapshots/archive/backyard/b.jpg": response(200, b"\xff\xd8arch", "image/jpeg"),
+        })
+        listed = client.events()
+        self.assertFalse(listed["events"][0]["snapshot"])
+        self.assertEqual(calls[0][0], "POST")
+        self.assertEqual(calls[0][1], "http://hub/api/events/retain")
+        self.assertIn(b'"max_records": 200', calls[0][2])
+        self.assertEqual(client.archive_snapshots(["detections/backyard/a.jpg"])["paths"], ["archive/backyard/a.jpg"])
+        self.assertEqual(client.archive_snapshots(["archive/backyard/b.jpg"])["reason"], "ARCHIVED_PROTECTED")
+        self.assertEqual(client.delete_snapshots(["archive/backyard/b.jpg"])["reason"], "ARCHIVED_PROTECTED")
+        self.assertEqual(client.delete_snapshots(["../secret.jpg"])["reason"], "MALFORMED_PARAMETERS")
+        self.assertTrue(client.delete_snapshots(["detections/backyard/a.jpg"])["accepted"])
+        self.assertEqual(client.clear_unarchived_snapshots()["reason"], "UNARCHIVED_CLEARED")
+        self.assertEqual(client.clear_events()["reason"], "EVENTS_CLEARED")
+        posted = [call[1] for call in calls if call[0] == "POST"]
+        self.assertEqual(posted.count("http://hub/api/gallery/delete"), 1)
+        self.assertIn("http://hub/api/gallery/clear-unarchived", posted)
+        self.assertNotIn("http://hub/api/gallery/clear", posted)
+        self.assertEqual(posted.count("http://hub/api/events/clear"), 1)
+        body, reason = client.download_snapshots(["detections/backyard/a.jpg", "archive/backyard/b.jpg"])
+        self.assertIsNone(reason)
+        with zipfile.ZipFile(io.BytesIO(body)) as bundle:
+            self.assertEqual(bundle.namelist(), ["detections/backyard/a.jpg", "archive/backyard/b.jpg"])
+            self.assertTrue(bundle.read("archive/backyard/b.jpg").startswith(b"\xff\xd8"))
+        self.assertNotIn(b"192.168", body)
+        self.assertNotIn(b"rtsp://", body)
 
 
 if __name__ == "__main__":
