@@ -1,0 +1,22 @@
+[Unit]
+Description=SYZYGY Health Workbook Service phase 1 (loopback read-only staging)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=KA_PI
+WorkingDirectory=/home/KA_PI/syzygy-mission-control
+Environment=HEALTH_WORKBOOK_HOST=127.0.0.1
+Environment=HEALTH_WORKBOOK_PORT=5052
+Environment=HEALTH_WORKBOOK_PATH=/home/KA_PI/syzygy-fitness-data/staging/KJA_Fitness_Master_Oct12.xlsx
+EnvironmentFile=-/home/KA_PI/syzygy-runtime/health-workbook.env
+ExecStart=/bin/bash /home/KA_PI/syzygy-mission-control/scripts/run-health-workbook.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
