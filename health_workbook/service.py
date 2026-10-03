@@ -1,4 +1,4 @@
-"""Loopback read-only HTTP service for the staged health workbook."""
+"""Loopback health workbook service. Phase 2A writes Measurements only."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from pathlib import Path
 import sys
 from urllib.parse import parse_qs, urlsplit
 
+from health_workbook.mutate import WorkbookWriteError
+from health_workbook.store import WriteFault, WriteStore
 from health_workbook.workbook import (
     DATE_FIELDS,
     REQUIRED_SHEETS,
@@ -42,15 +44,26 @@ class Config:
     read_token: str
     host: str = "127.0.0.1"
     port: int = 5052
+    maintain_token: str = ""
+    fault: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.maintain_token and self.maintain_token == self.read_token:
+            raise ValueError("Read and maintain tokens must differ")
 
     @classmethod
     def from_env(cls) -> Config:
         token = os.environ.get("HEALTH_WORKBOOK_READ_TOKEN", "")
+        maintain = os.environ.get("HEALTH_WORKBOOK_MAINTAIN_TOKEN", "")
         path = os.environ.get("HEALTH_WORKBOOK_PATH", "")
         host = os.environ.get("HEALTH_WORKBOOK_HOST", "127.0.0.1")
         port_text = os.environ.get("HEALTH_WORKBOOK_PORT", "5052")
         if not token:
             raise SystemExit("HEALTH_WORKBOOK_READ_TOKEN is required")
+        if not maintain:
+            raise SystemExit("HEALTH_WORKBOOK_MAINTAIN_TOKEN is required")
+        if token == maintain:
+            raise SystemExit("Read and maintain tokens must differ")
         if not path:
             raise SystemExit("HEALTH_WORKBOOK_PATH is required")
         if host != "127.0.0.1":
@@ -61,7 +74,7 @@ class Config:
             raise SystemExit("HEALTH_WORKBOOK_PORT must be an integer") from error
         if port < 1 or port > 65535:
             raise SystemExit("HEALTH_WORKBOOK_PORT must be an integer")
-        return cls(Path(path), token, host, port)
+        return cls(Path(path), token, host, port, maintain)
 
 
 class JsonFormatter(logging.Formatter):
@@ -96,31 +109,38 @@ class App:
         self.config = config
         self.logger = logger
 
-    def dispatch(self, method: str, target: str, headers) -> tuple[int, dict]:
+    def dispatch(self, method: str, target: str, headers, body: bytes = b"") -> tuple[int, dict]:
         parts = urlsplit(target)
         path = parts.path[:-1] if parts.path.endswith("/") and parts.path != "/" else parts.path
         sheet_name = None
         row_count = None
         try:
-            self._authorize(headers)
+            role = self._authorize(headers)
             self._reject_token_query(parts.query)
-            if method not in {"GET", "HEAD"}:
-                raise ApiError(405, "read_only", "Phase 1 serves reads only")
-            status, body = self._get(path, parts.query)
-            sheet_name = body.get("sheet")
-            rows = body.get("rows")
+            if method in {"GET", "HEAD"}:
+                status, payload = self._get(path, parts.query)
+            else:
+                status, payload = self._write(method, path, role, body)
+            sheet_name = payload.get("sheet")
+            rows = payload.get("rows")
             row_count = len(rows) if isinstance(rows, list) else None
+            response = payload
         except ApiError as error:
             status = error.status
-            body = {"error": error.error}
+            response = {"error": error.error}
             if error.detail:
-                body["detail"] = error.detail
-            if error.error == "read_only":
-                body["read_only"] = True
-                body["writes_enabled"] = False
+                response["detail"] = error.detail
+            if error.error == "writes_disabled":
+                response["writes_enabled"] = ["measurements"]
+        except WorkbookWriteError as error:
+            status = 409 if error.code in {"measurements_missing", "conflict"} else 400
+            response = {"error": error.code, "detail": error.detail}
+        except WriteFault:
+            status = 500
+            response = {"error": "write_failed"}
         except Exception as error:
             status = 500
-            body = {"error": "internal_error"}
+            response = {"error": "internal_error"}
             self.logger.error("internal_error %s", type(error).__name__)
         self.logger.info(
             "request",
@@ -132,15 +152,19 @@ class App:
                 "rows": row_count,
             },
         )
-        return status, body
+        return status, response
 
-    def _authorize(self, headers) -> None:
+    def _authorize(self, headers) -> str:
         supplied = headers.get("Authorization", "")
         if not isinstance(supplied, str) or len(supplied) > 500:
             raise ApiError(401, "unauthorized")
-        expected = "Bearer " + self.config.read_token
-        if not hmac.compare_digest(supplied, expected):
-            raise ApiError(401, "unauthorized")
+        maintain = "Bearer " + self.config.maintain_token if self.config.maintain_token else ""
+        reader = "Bearer " + self.config.read_token
+        if maintain and hmac.compare_digest(supplied, maintain):
+            return "maintain"
+        if hmac.compare_digest(supplied, reader):
+            return "read"
+        raise ApiError(401, "unauthorized")
 
     def _reject_token_query(self, query: str) -> None:
         parsed = parse_qs(query, keep_blank_values=True)
@@ -170,21 +194,21 @@ class App:
         order = workbook.sheet_order if workbook else []
         return {
             "service": SERVICE,
-            "phase": 1,
-            "mode": "read-only-staging",
-            "read_only": True,
-            "writes_enabled": False,
+            "phase": "2a",
+            "mode": "measurements-write-staging",
+            "read_only": False,
+            "writes_enabled": ["measurements"],
             "host": self.config.host,
             "public_route": False,
-            "measurements_enabled": False,
+            "measurements_enabled": "Measurements" in order,
             "workbook_present": loaded.present,
             "workbook_name": self.config.workbook_path.name if loaded.present else None,
             "sha256": workbook.sha256 if workbook else None,
             "valid": loaded.valid,
             "error": loaded.error,
             "detail": loaded.detail,
-            "sheets": [name for name in order if name in REQUIRED_SHEETS],
-            "unserved_sheets": [name for name in order if name not in REQUIRED_SHEETS],
+            "sheets": [name for name in order if name in REQUIRED_SHEETS or name == "Measurements"],
+            "unserved_sheets": [name for name in order if name not in REQUIRED_SHEETS and name != "Measurements"],
         }
 
     def _loaded(self) -> LoadResult:
@@ -193,11 +217,42 @@ class App:
             raise ApiError(503, loaded.error or "workbook_invalid", loaded.detail)
         return loaded
 
+    def _write(self, method: str, path: str, role: str, raw: bytes) -> tuple[int, dict]:
+        if role != "maintain":
+            raise ApiError(403, "forbidden", "Maintain permission is required")
+        if len(raw) > 1024 * 1024:
+            raise ApiError(413, "body_too_large")
+        if method == "POST" and path == "/v1/measurements":
+            return self._measurement_result(self._store().append(self._json_object(raw)), 201)
+        prefix = "/v1/measurements/"
+        if method == "PATCH" and path.startswith(prefix):
+            result = self._store().correct(path[len(prefix):], self._json_object(raw))
+            return self._measurement_result(result, 200)
+        raise ApiError(405, "writes_disabled", "Only Measurements writes are enabled")
+
+    def _json_object(self, raw: bytes) -> dict:
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ApiError(400, "malformed", "Request body must be JSON") from error
+        if not isinstance(payload, dict):
+            raise ApiError(400, "malformed", "Request body must be an object")
+        return payload
+
+    def _store(self) -> WriteStore:
+        return WriteStore(self.config.workbook_path, self.config.fault)
+
+    def _measurement_result(self, result: dict, created: int) -> tuple[int, dict]:
+        status = 200 if result["result"] == "exists" else created
+        result["read_only"] = False
+        return status, result
+
     def _sheet(self, loaded: LoadResult, key: str) -> dict:
-        if key.casefold().replace("_", "-") in {"measurements", "measurement"}:
-            raise ApiError(404, "measurements_unavailable", "Measurements is not served in phase 1")
+        normalized = key.casefold().replace("_", "-")
+        if normalized in {"measurements", "measurement"} and "Measurements" not in loaded.workbook.sheets:
+            raise ApiError(404, "measurements_unavailable", "Measurements sheet is not in this workbook")
         name = resolve_sheet_name(key)
-        if name is None or name not in REQUIRED_SHEETS or name == "README":
+        if name is None or name == "README" or (name not in REQUIRED_SHEETS and name != "Measurements"):
             raise ApiError(404, "unknown_sheet")
         sheet = loaded.workbook.sheets[name]
         if sheet.kind == "prose":
@@ -217,10 +272,11 @@ class App:
         raw_sheet = params.get("sheet", "")
         if not raw_sheet:
             raise ApiError(400, "sheet_required")
-        if raw_sheet.casefold().replace("_", "-").replace(" ", "-") in {"measurements", "measurement"}:
-            raise ApiError(404, "measurements_unavailable", "Measurements is not served in phase 1")
+        normalized = raw_sheet.casefold().replace("_", "-").replace(" ", "-")
+        if normalized in {"measurements", "measurement"} and "Measurements" not in loaded.workbook.sheets:
+            raise ApiError(404, "measurements_unavailable", "Measurements sheet is not in this workbook")
         name = resolve_sheet_name(raw_sheet)
-        if name is None or name not in REQUIRED_SHEETS:
+        if name is None or (name not in REQUIRED_SHEETS and name != "Measurements"):
             raise ApiError(404, "unknown_sheet")
         date = _optional_day(params.get("date"), "date")
         start = _optional_day(params.get("from"), "from")
@@ -254,7 +310,7 @@ class App:
     def _envelope(self, name: str, kind: str, **payload) -> dict:
         body = {
             "service": SERVICE,
-            "read_only": True,
+            "read_only": name != "Measurements",
             "sheet": name,
             "kind": kind,
         }
@@ -349,8 +405,8 @@ def build_handler(app: App):
             self._respond()
 
         def _respond(self):
-            self._discard_body()
-            status, body = app.dispatch(self.command, self.path, self.headers)
+            raw = self._read_body() if self.command in {"POST", "PUT", "PATCH", "DELETE"} else b""
+            status, body = app.dispatch(self.command, self.path, self.headers, raw)
             encoded = json.dumps(body, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -362,18 +418,23 @@ def build_handler(app: App):
             if self.command != "HEAD":
                 self.wfile.write(encoded)
 
-        def _discard_body(self):
+        def _read_body(self) -> bytes:
             raw_length = self.headers.get("Content-Length", "0")
             try:
                 length = int(raw_length)
             except (TypeError, ValueError):
                 length = 0
-            remaining = min(max(length, 0), 1024 * 1024)
+            if length < 0:
+                return b""
+            remaining = min(length, 1024 * 1024 + 1)
+            chunks = []
             while remaining:
                 chunk = self.rfile.read(min(remaining, 65536))
                 if not chunk:
                     break
+                chunks.append(chunk)
                 remaining -= len(chunk)
+            return b"".join(chunks)
 
         def log_message(self, fmt, *args):
             return

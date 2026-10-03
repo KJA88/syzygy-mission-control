@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 1 read-only health workbook service. Loopback only.
+# Phase 2A health workbook service. Loopback only. Measurements writes only.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,6 +10,14 @@ export HEALTH_WORKBOOK_PORT="${HEALTH_WORKBOOK_PORT:-5052}"
 
 if [[ -z "${HEALTH_WORKBOOK_READ_TOKEN:-}" ]]; then
   echo "HEALTH_WORKBOOK_READ_TOKEN is required" >&2
+  exit 1
+fi
+if [[ -z "${HEALTH_WORKBOOK_MAINTAIN_TOKEN:-}" ]]; then
+  echo "HEALTH_WORKBOOK_MAINTAIN_TOKEN is required" >&2
+  exit 1
+fi
+if [[ "$HEALTH_WORKBOOK_READ_TOKEN" == "$HEALTH_WORKBOOK_MAINTAIN_TOKEN" ]]; then
+  echo "Read and maintain tokens must differ" >&2
   exit 1
 fi
 if [[ -z "${HEALTH_WORKBOOK_PATH:-}" ]]; then
@@ -28,7 +36,7 @@ else
 fi
 
 echo "Starting health workbook service on http://127.0.0.1:${HEALTH_WORKBOOK_PORT}/"
-echo "  mode=read-only-staging"
+echo "  mode=measurements-write-staging"
 echo "  workbook=$HEALTH_WORKBOOK_PATH"
 
 exec "$PYTHON" -m health_workbook

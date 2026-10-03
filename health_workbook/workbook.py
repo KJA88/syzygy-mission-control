@@ -58,6 +58,10 @@ TABLE_HEADERS = {
         "note_paraphrased", "raw_cue", "updated_by",
     ),
     "Weight Trend": ("date", "weight_lb", "body_fat_pct", "delta_lb", "notes"),
+    "Measurements": (
+        "timestamp", "metric", "value", "value2", "unit", "source", "device",
+        "external_id", "context", "notes", "updated_by", "recorded_at",
+    ),
 }
 
 PROSE_SHEETS = {"README", "Deficit Bank"}
@@ -68,6 +72,7 @@ DATE_FIELDS = {
     "Lifts": "date",
     "Notes": "datetime",
     "Weight Trend": "date",
+    "Measurements": "timestamp",
 }
 SHEET_KEYS = {
     "readme": "README",
@@ -80,6 +85,8 @@ SHEET_KEYS = {
     "weighttrend": "Weight Trend",
     "deficit-bank": "Deficit Bank",
     "deficitbank": "Deficit Bank",
+    "measurements": "Measurements",
+    "measurement": "Measurements",
 }
 ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -118,6 +125,11 @@ def sheet_key(name: str) -> str:
 
 def resolve_sheet_name(value: str) -> str | None:
     return SHEET_KEYS.get(value.strip().casefold().replace("_", "-").replace(" ", "-"))
+
+
+def inspect_workbook(data: bytes) -> Workbook:
+    sheets, order = _parse(data)
+    return Workbook("", sha256(data).hexdigest(), order, sheets)
 
 
 def load_workbook(path: Path) -> LoadResult:

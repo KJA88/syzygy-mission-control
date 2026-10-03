@@ -204,10 +204,10 @@ class HttpFixture(unittest.TestCase):
         status, body = self.request("GET", "/v1/status")
         self.assertEqual(status, 200)
         self.assertEqual(body["service"], "syzygy-health-workbook")
-        self.assertEqual(body["phase"], 1)
-        self.assertEqual(body["mode"], "read-only-staging")
-        self.assertTrue(body["read_only"])
-        self.assertFalse(body["writes_enabled"])
+        self.assertEqual(body["phase"], "2a")
+        self.assertEqual(body["mode"], "measurements-write-staging")
+        self.assertFalse(body["read_only"])
+        self.assertEqual(body["writes_enabled"], ["measurements"])
         self.assertFalse(body["public_route"])
         self.assertFalse(body["measurements_enabled"])
         self.assertTrue(body["valid"])
@@ -333,10 +333,8 @@ class HttpFixture(unittest.TestCase):
             ("DELETE", "/v1/sheets/notes"),
         ):
             status, body = self.request(method, path, data=b"blocked")
-            self.assertEqual(status, 405, path)
-            self.assertEqual(body["error"], "read_only")
-            self.assertTrue(body["read_only"])
-            self.assertFalse(body["writes_enabled"])
+            self.assertEqual(status, 403, path)
+            self.assertEqual(body["error"], "forbidden")
         status, body = self.request("GET", "/v1/master/workbook")
         self.assertEqual(status, 404)
         status, body = self.request("GET", "/v1/sheets/measurements")
@@ -406,18 +404,15 @@ class WorkbookValidationTests(unittest.TestCase):
         result = load_workbook(Path(self.tmp.name))
         self.assertEqual(result.error, "workbook_not_regular_file")
 
-    def test_extra_measurements_sheet_stays_unserved(self):
+    def test_malformed_measurements_sheet_is_rejected(self):
         path = Path(self.tmp.name) / "extra.xlsx"
         write_workbook(path, fixture_sheets(extra=[("Measurements", [["metric", "value"], ["blood_glucose", 1]])]))
         result = load_workbook(path)
-        self.assertTrue(result.valid)
-        status, body = self.app(path).dispatch("GET", "/v1/status", {"Authorization": "Bearer " + TOKEN})
-        self.assertEqual(body["unserved_sheets"], ["Measurements"])
-        self.assertFalse(body["measurements_enabled"])
-        status, body = self.app(path).dispatch("GET", "/v1/sheets/measurements", {"Authorization": "Bearer " + TOKEN})
-        self.assertEqual(status, 404)
+        self.assertFalse(result.valid)
+        self.assertIn("Measurements header mismatch", result.detail)
         status, body = self.app(path).dispatch("GET", "/v1/sheets/daily", {"Authorization": "Bearer " + TOKEN})
-        self.assertEqual(status, 200)
+        self.assertEqual(status, 503)
+        self.assertEqual(body["error"], "workbook_invalid")
 
     def test_shared_strings_and_excel_dates(self):
         serial = (date(2026, 1, 2) - date(1899, 12, 30)).days
@@ -466,11 +461,10 @@ class WorkbookValidationTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 Config.from_env()
 
-    def test_phase1_source_has_no_write_path(self):
-        text = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in (ROOT / "health_workbook").glob("*.py")
-        )
-        for banned in ("os.replace", "write_bytes", "NamedTemporaryFile", "wb'"):
-            self.assertNotIn(banned, text)
+    def test_only_measurements_writes_are_enabled(self):
+        source = (ROOT / "health_workbook" / "service.py").read_text(encoding="utf-8")
+        self.assertIn('path == "/v1/measurements"', source)
+        self.assertIn("Only Measurements writes are enabled", source)
+        self.assertNotIn('"/v1/daily"', source)
+        self.assertNotIn('"/v1/meals"', source)
 

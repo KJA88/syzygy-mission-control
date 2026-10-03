@@ -1,14 +1,16 @@
-# SYZYGY Health Workbook Service — phase 1
+# SYZYGY Health Workbook Service — phase 2A
 
-Read-only staging service for one shared workbook. Phase 1 serves GET requests on `127.0.0.1` and does not write, back up, lock, create a Measurements sheet, publish a Cloudflare route, or talk to Mission Control, Fitbit, the Macro App, or Polar.
+Loopback service for one shared staged workbook. Phase 2A can append and correct rows on the Measurements sheet only. Daily, Meals, Training, Lifts, Notes, Weight Trend, Deficit Bank, and README stay read-only. There is no Cloudflare route and no Mission Control, Fitbit, Macro App, or Polar feeder.
+
+A maintain token is required in addition to the read token. They must differ. The read token cannot write. The maintain token cannot write any sheet except Measurements.
 
 The process opens `HEALTH_WORKBOOK_PATH` with a read and checks that the file is a regular file. Point that variable at a staged copy. Leave the original workbook where it is.
 
-## Read token
+## Tokens
 
-`Authorization: Bearer <HEALTH_WORKBOOK_READ_TOKEN>` on every request. The token is an environment variable. Do not put it in Git, URLs, or logs.
+`Authorization: Bearer <token>` on every request. `HEALTH_WORKBOOK_READ_TOKEN` can read. `HEALTH_WORKBOOK_MAINTAIN_TOKEN` can read and call `POST /v1/measurements` and `PATCH /v1/measurements/{row_id}`. Do not put either token in Git, URLs, or logs.
 
-There is no write token in this phase. POST, PUT, PATCH, and DELETE return 405.
+Other write methods return 405. A read token that attempts a write returns 403.
 
 ## Endpoints
 
@@ -21,7 +23,10 @@ There is no write token in this phase. POST, PUT, PATCH, and DELETE return 405.
 - `GET /v1/sheets/notes`
 - `GET /v1/sheets/weight-trend`
 - `GET /v1/sheets/deficit-bank`
+- `GET /v1/sheets/measurements`
 - `GET /v1/rows?sheet=&date=&from=&to=&session_id=&limit=`
+- `POST /v1/measurements`
+- `PATCH /v1/measurements/{row_id}`
 
 `session_id` applies to Training only. `date`, `from`, and `to` are `YYYY-MM-DD`. `limit` defaults to 100, maximum 500, and keeps the last matching rows in sheet order. Measurements is not served.
 
