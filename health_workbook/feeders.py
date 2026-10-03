@@ -306,12 +306,19 @@ def load_macro_entries(path: str, dates: list[str]) -> list[dict]:
     connection = sqlite3.connect("file:" + path + "?mode=ro", uri=True, timeout=10)
     try:
         connection.row_factory = sqlite3.Row
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "imported_entry_details" in tables:
+            accounting = "COALESCE(i.nutrition_accounting, 'itemized')"
+            join = "LEFT JOIN imported_entry_details i ON i.entry_id = e.id"
+        else:
+            accounting = "'itemized'"
+            join = ""
         placeholders = ",".join("?" for _ in dates)
         query = f"""SELECT e.id, e.entry_date, e.logged_time, e.food_name_snapshot,
             e.kcal, e.protein_g, e.carbs_g, e.fat_g, e.category,
-            COALESCE(i.nutrition_accounting, 'itemized') AS nutrition_accounting
+            {accounting} AS nutrition_accounting
             FROM food_entries e
-            LEFT JOIN imported_entry_details i ON i.entry_id = e.id
+            {join}
             WHERE e.entry_date IN ({placeholders})
             ORDER BY e.entry_date, e.logged_time, e.created_at, e.id"""
         return [dict(row) for row in connection.execute(query, dates)]

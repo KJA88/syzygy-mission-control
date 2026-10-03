@@ -80,6 +80,25 @@ class FeederPlanningTests(unittest.TestCase):
         ]
         self.assertEqual(macro_totals(entries, DAY)["kcal_in"], 500)
 
+    def test_macro_db_without_import_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = Path(tmp) / "macros.sqlite3"
+            connection = sqlite3.connect(database)
+            connection.execute("""CREATE TABLE food_entries (
+                id TEXT, entry_date TEXT, logged_time TEXT, food_name_snapshot TEXT,
+                kcal REAL, protein_g REAL, carbs_g REAL, fat_g REAL, category TEXT,
+                created_at TEXT
+            )""")
+            connection.execute(
+                "INSERT INTO food_entries VALUES ('a', ?, '07:00', 'apple', 90, 1, 20, 0, 'food', 't')",
+                (DAY,),
+            )
+            connection.commit()
+            connection.close()
+            rows = load_macro_entries(str(database), [DAY])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["nutrition_accounting"], "itemized")
+
 
 class FeederServiceTests(unittest.TestCase):
     def setUp(self):
