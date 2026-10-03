@@ -100,4 +100,6 @@ Fitbit refreshes its own Daily columns. It leaves meal, macro, vodka, supplement
 
 Macro meals use `source=MACRO_APP` and `updated_by=macro-sync`. A meal already stored by another writer is not replaced. Daily intake updates are only `kcal_in`, `protein_g`, `carbs_g`, and `fat_g`.
 
-On the Pi, `syzygy-fitbit-sync.timer` runs every 30 minutes and `syzygy-macro-sync.timer` runs every 15 minutes. They are separate oneshot services. Logs are one JSON object of counts and field names.
+`python -m health_workbook.withings_feeder` reads Withings Body Smart and BPM Connect through the Withings API and writes Measurements, plus Daily `weight_lb` and `body_fat_pct`, through this service. Client id, client secret, and tokens stay in the runtime env file. A refresh replaces the stored tokens there and does not print them. Raw blood pressure stays on Measurements. Daily weight or body fat already stored by another writer is left in place.
+
+On the Pi, `syzygy-fitbit-sync.timer` runs every 30 minutes, `syzygy-macro-sync.timer` runs every 15 minutes, and `syzygy-withings-sync.timer` runs every 30 minutes. They are separate oneshot services. Logs are one JSON object of counts and field names.

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the Withings health workbook sync every 30 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+AccuracySec=1min
+Persistent=true
+Unit=syzygy-withings-sync.service
+
+[Install]
+WantedBy=timers.target
