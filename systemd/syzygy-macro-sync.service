@@ -1,0 +1,14 @@
+[Unit]
+Description=SYZYGY Macro App health workbook sync
+After=network-online.target syzygy-health-workbook.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=KA_PI
+WorkingDirectory=/home/KA_PI/syzygy-mission-control
+Environment=HEALTH_WORKBOOK_URL=http://127.0.0.1:5052
+Environment=MACRO_DB=/home/KA_PI/syzygy-macros/instance/macros.sqlite3
+EnvironmentFile=-/home/KA_PI/syzygy-runtime/health-workbook.env
+ExecStart=/bin/bash /home/KA_PI/syzygy-mission-control/scripts/run-macro-sync.sh
+NoNewPrivileges=true

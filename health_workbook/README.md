@@ -1,6 +1,6 @@
 # SYZYGY Health Workbook Service
 
-Loopback service for one shared staged workbook. Maintain callers can append and correct Measurements, Daily, Meals, Training, Lifts, and Notes. Weight Trend, Deficit Bank, and README stay read-only. There is no Cloudflare route and no Mission Control, Fitbit, Macro App, or Polar feeder.
+Loopback service for one shared staged workbook. Maintain callers can append and correct Measurements, Daily, Meals, Training, Lifts, and Notes. Weight Trend, Deficit Bank, and README stay read-only. There is no Cloudflare route and no Mission Control or Polar feeder. Fitbit and the Macro App push through this API; they do not open the workbook file.
 
 A maintain token is required in addition to the read token. They must differ. The read token cannot write. Every write requires `source`, `updated_by`, and `recorded_at`. A repeated identity with the same values is idempotent. A repeated identity with different values conflicts and must be corrected with `PATCH`, which requires `reason` and keeps the previous row in the audit log. Daily has one row per date. Training keeps a separate row for each `session_id` and `source`.
 
@@ -91,3 +91,13 @@ PY
 ```
 
 The status check prints validity and mode only. `ss` should show `127.0.0.1:5052`. Do not add a Cloudflare hostname for this port.
+
+## Feeders
+
+`python -m health_workbook.fitbit_feeder` reads the loopback Fitbit MCP and writes Daily plus Training through this service. `python -m health_workbook.macro_feeder` reads the Macro App SQLite database and writes Meals plus Daily intake totals. Both use `HEALTH_WORKBOOK_MAINTAIN_TOKEN` from the environment. Each run covers today and yesterday in America/Los_Angeles, and a repeat of the same values does not write again.
+
+Fitbit refreshes its own Daily columns. It leaves meal, macro, vodka, supplement, symptom, and note cells alone. It does not write readiness or sleep score. `weight_lb` is filled when the cell is empty and is left in place when a different value was written by someone other than `fitbit-sync`. `fitbit_resting_burn` is total burn minus active burn when both calories are present and the result is not negative. Training rows use `source=FITBIT`, `updated_by=fitbit-sync`, and `burn_role=do_not_sum`. The session id is the exercise start, type, and end.
+
+Macro meals use `source=MACRO_APP` and `updated_by=macro-sync`. A meal already stored by another writer is not replaced. Daily intake updates are only `kcal_in`, `protein_g`, `carbs_g`, and `fat_g`.
+
+On the Pi, `syzygy-fitbit-sync.timer` runs every 30 minutes and `syzygy-macro-sync.timer` runs every 15 minutes. They are separate oneshot services. Logs are one JSON object of counts and field names.

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the Macro App health workbook sync every 15 minutes
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=15min
+AccuracySec=1min
+Persistent=true
+Unit=syzygy-macro-sync.service
+
+[Install]
+WantedBy=timers.target
