@@ -1,4 +1,4 @@
-"""Serialized Measurements writes: lock, backup, validate, replace, audit."""
+"""Serialized workbook writes: lock, backup, validate, replace, audit."""
 
 from __future__ import annotations
 
@@ -13,15 +13,29 @@ import tempfile
 
 from health_workbook.mutate import (
     WorkbookWriteError,
-    append_measurement,
-    find_measurement,
-    patch_measurement,
+    _same,
+    add_measurements_sheet,
+    append_row,
+    find_row,
+    patch_row,
+    row_values,
 )
 from health_workbook.workbook import TABLE_HEADERS, inspect_workbook
 
-MEASUREMENT_FIELDS = set(TABLE_HEADERS["Measurements"])
-REQUIRED_APPEND = ("timestamp", "metric", "source", "updated_by", "recorded_at")
+WRITABLE = ("Measurements", "Daily", "Meals", "Training", "Lifts", "Notes")
+READ_ONLY = ("README", "Weight Trend", "Deficit Bank")
+IDENTITY = {
+    "Measurements": ("source", "external_id"),
+    "Daily": ("date",),
+    "Meals": ("date", "time", "food"),
+    "Training": ("session_id", "source"),
+    "Lifts": ("date", "exercise"),
+    "Notes": ("datetime", "category", "note_paraphrased"),
+}
+OPTIONAL_IDENTITY = {"Measurements": {"external_id"}}
+ATTRIBUTION = ("source", "updated_by", "recorded_at")
 REQUIRED_PATCH = ("source", "updated_by", "recorded_at", "reason")
+DATE_EXACT = {"date"}
 
 
 class WriteFault(RuntimeError):
@@ -36,61 +50,78 @@ class WriteStore:
         self.backup_dir = workbook_path.parent / "backups"
 
     def append(self, record: dict) -> dict:
-        values = _measurement_values(record, REQUIRED_APPEND)
-        with self._locked() as connection:
-            current = self._read()
-            existing = find_measurement(current, values["source"], values.get("external_id"))
-            if existing:
-                return {"result": "exists", "row_id": existing, "sheet": "Measurements", "backup": None}
-            new_bytes, row_id = append_measurement(current, values)
-            self._check(new_bytes)
-            backup = self._commit(connection, current, new_bytes, {
-                "action": "append",
-                "row_id": row_id,
-                "actor": values["updated_by"],
-                "source": values["source"],
-                "reason": None,
-                "external_id": values.get("external_id"),
-                "before_json": None,
-                "after_json": json.dumps(values, sort_keys=True),
-            })
-            return {"result": "appended", "row_id": row_id, "sheet": "Measurements", "backup": backup.name}
+        return self.append_sheet("Measurements", record)
 
     def correct(self, row_id: str, record: dict) -> dict:
+        return self.correct_sheet("Measurements", row_id, record)
+
+    def migrate_measurements(self) -> dict:
+        with self._locked() as connection:
+            current = self._read()
+            book = inspect_workbook(current)
+            sheet = book.sheets.get("Measurements")
+            if sheet is not None:
+                if sheet.headers != list(TABLE_HEADERS["Measurements"]):
+                    raise WorkbookWriteError("measurements_headers", "Measurements header does not match")
+                return {"result": "present", "sheet": "Measurements", "backup": None}
+            new_bytes = add_measurements_sheet(current)
+            self._check(new_bytes, "Measurements")
+            backup = self._commit(connection, current, new_bytes, {
+                "action": "migrate",
+                "sheet": "Measurements",
+                "row_id": None,
+                "actor": "migration",
+                "source": "health-workbook",
+                "reason": "add Measurements sheet",
+                "external_id": None,
+                "before_json": None,
+                "after_json": json.dumps({"headers": list(TABLE_HEADERS["Measurements"])}),
+            })
+            return {"result": "migrated", "sheet": "Measurements", "backup": backup.name}
+
+    def append_sheet(self, sheet_name: str, record: dict) -> dict:
+        _reject_readonly(sheet_name)
+        values = _sheet_values(sheet_name, record, _append_required(sheet_name))
+        with self._locked() as connection:
+            current = self._read()
+            existing = _existing_row(current, sheet_name, values)
+            if existing:
+                if _payload_matches(current, sheet_name, existing, values):
+                    return {"result": "exists", "row_id": existing, "sheet": sheet_name, "backup": None}
+                raise WorkbookWriteError("conflict", f"{sheet_name} already has a different row for this identity")
+            new_bytes, row_id = append_row(current, sheet_name, _cell_values(sheet_name, values))
+            self._check(new_bytes, sheet_name)
+            backup = self._commit(connection, current, new_bytes, _audit("append", sheet_name, row_id, values, None, values))
+            return {"result": "appended", "row_id": row_id, "sheet": sheet_name, "backup": backup.name}
+
+    def correct_sheet(self, sheet_name: str, row_id: str, record: dict) -> dict:
+        _reject_readonly(sheet_name)
         _require(record, REQUIRED_PATCH)
         fields = record.get("fields")
         if not isinstance(fields, dict) or not fields:
             raise WorkbookWriteError("missing_field", "fields must include the corrected values")
-        unknown = set(fields).difference(MEASUREMENT_FIELDS)
+        headers = set(TABLE_HEADERS[sheet_name])
+        unknown = set(fields).difference(headers)
         if unknown:
-            raise WorkbookWriteError("unknown_field", "Unknown measurement field: " + ", ".join(sorted(unknown)))
-        values = _measurement_values({"timestamp": "2000-01-01T00:00:00Z", "metric": "placeholder", **fields, **record}, ("source", "updated_by", "recorded_at"))
-        # Placeholder keys are only for validation of attribution; real changes are `fields` plus attribution.
-        changes = {key: fields[key] for key in fields}
-        changes["source"] = record["source"]
-        changes["updated_by"] = record["updated_by"]
-        changes["recorded_at"] = record["recorded_at"]
+            raise WorkbookWriteError("unknown_field", "Unknown field: " + ", ".join(sorted(unknown)))
+        attribution = _sheet_values(sheet_name, {**fields, **record}, ATTRIBUTION)
+        changes = {key: attribution[key] for key in fields if key in attribution}
+        for key in ("updated_by", "recorded_at", "source"):
+            if key in headers:
+                changes[key] = attribution[key]
         with self._locked() as connection:
             current = self._read()
-            external_id = changes.get("external_id")
-            if external_id:
-                existing = find_measurement(current, changes["source"], str(external_id))
-                if existing and existing != row_id:
-                    raise WorkbookWriteError("conflict", "external_id already exists for this source")
-            new_bytes, before = patch_measurement(current, row_id, changes)
-            self._check(new_bytes)
+            probe = {**row_values(current, sheet_name, row_id), **changes}
+            existing = _existing_row(current, sheet_name, probe)
+            if existing and existing != row_id:
+                raise WorkbookWriteError("conflict", f"{sheet_name} identity belongs to another row")
+            new_bytes, before = patch_row(current, sheet_name, row_id, changes)
+            self._check(new_bytes, sheet_name)
             after = {**before, **changes}
-            backup = self._commit(connection, current, new_bytes, {
-                "action": "correct",
-                "row_id": row_id,
-                "actor": record["updated_by"],
-                "source": record["source"],
-                "reason": record["reason"].strip(),
-                "external_id": after.get("external_id"),
-                "before_json": json.dumps(before, sort_keys=True),
-                "after_json": json.dumps(after, sort_keys=True),
-            })
-            return {"result": "corrected", "row_id": row_id, "sheet": "Measurements", "backup": backup.name}
+            backup = self._commit(connection, current, new_bytes, _audit(
+                "correct", sheet_name, row_id, attribution, before, after, record["reason"].strip(),
+            ))
+            return {"result": "corrected", "row_id": row_id, "sheet": sheet_name, "backup": backup.name}
 
     def audit_entries(self) -> list[dict]:
         if not self.db_path.exists():
@@ -118,15 +149,16 @@ class WriteStore:
             written = self._read()
             if sha256(written).digest() != sha256(new_bytes).digest():
                 raise WriteFault("replace_mismatch")
-            self._check(written)
+            self._check(written, audit["sheet"])
             if self.fault == "audit":
                 raise WriteFault("audit")
             connection.execute(
                 """INSERT INTO audit(at, action, sheet, row_id, actor, source, reason, external_id, before_json, after_json, backup_name, workbook_sha)
-                   VALUES (?, ?, 'Measurements', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     _stamp(),
                     audit["action"],
+                    audit["sheet"],
                     audit["row_id"],
                     audit["actor"],
                     audit["source"],
@@ -144,11 +176,12 @@ class WriteStore:
             raise
         return backup
 
-    def _check(self, data: bytes) -> None:
+    def _check(self, data: bytes, sheet_name: str) -> None:
         book = inspect_workbook(data)
-        sheet = book.sheets.get("Measurements")
-        if sheet is None or sheet.headers != list(TABLE_HEADERS["Measurements"]):
-            raise WorkbookWriteError("measurements_missing", "Measurements sheet is missing or invalid")
+        sheet = book.sheets.get(sheet_name)
+        if sheet is None or sheet.headers != list(TABLE_HEADERS[sheet_name]):
+            code = "measurements_missing" if sheet_name == "Measurements" else "sheet_missing"
+            raise WorkbookWriteError(code, f"{sheet_name} sheet is missing or invalid")
 
     def _read(self) -> bytes:
         return self.workbook_path.read_bytes()
@@ -216,25 +249,91 @@ class WriteStore:
             connection.close()
 
 
-def _measurement_values(record: dict, required: tuple[str, ...]) -> dict:
+def _append_required(sheet_name: str) -> tuple[str, ...]:
+    identity = tuple(key for key in IDENTITY[sheet_name] if key not in OPTIONAL_IDENTITY.get(sheet_name, ()))
+    required = []
+    for key in (*ATTRIBUTION, *identity):
+        if key not in required:
+            required.append(key)
+    if sheet_name == "Measurements":
+        for key in ("timestamp", "metric"):
+            if key not in required:
+                required.append(key)
+    if sheet_name == "Training" and "date" not in required:
+        required.append("date")
+    return tuple(required)
+
+
+def _sheet_values(sheet_name: str, record: dict, required: tuple[str, ...]) -> dict:
     _require(record, required)
-    unknown = set(record).difference(MEASUREMENT_FIELDS | {"fields", "reason"})
+    headers = set(TABLE_HEADERS[sheet_name])
+    allowed = headers | {"source", "updated_by", "recorded_at", "fields", "reason", "external_id"}
+    unknown = set(record).difference(allowed)
     if unknown:
-        raise WorkbookWriteError("unknown_field", "Unknown measurement field: " + ", ".join(sorted(unknown)))
+        raise WorkbookWriteError("unknown_field", "Unknown field: " + ", ".join(sorted(unknown)))
     values = {}
-    for key in TABLE_HEADERS["Measurements"]:
+    for key in (*TABLE_HEADERS[sheet_name], *ATTRIBUTION):
         if key not in record or record[key] in (None, ""):
             continue
         value = record[key]
-        if key in {"value", "value2"} and not isinstance(value, (int, float, str)):
-            raise WorkbookWriteError("invalid_value", f"{key} must be text or a number")
-        if not isinstance(value, (int, float, str)) or isinstance(value, bool):
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
             raise WorkbookWriteError("invalid_value", f"{key} must be text or a number")
         values[key] = value.strip() if isinstance(value, str) else value
-    timestamp = str(values.get("timestamp", ""))
-    if len(timestamp) < 10 or timestamp[4] != "-" or timestamp[7] != "-":
-        raise WorkbookWriteError("invalid_timestamp", "timestamp must start with YYYY-MM-DD")
+    _validate_dates(sheet_name, values)
     return values
+
+
+def _cell_values(sheet_name: str, values: dict) -> dict:
+    return {key: values[key] for key in TABLE_HEADERS[sheet_name] if key in values}
+
+
+def _existing_row(data: bytes, sheet_name: str, values: dict) -> str | None:
+    identity = {}
+    for key in IDENTITY[sheet_name]:
+        if key not in values or values[key] in (None, ""):
+            if key in OPTIONAL_IDENTITY.get(sheet_name, ()):
+                return None
+            raise WorkbookWriteError("missing_field", "Required: " + key)
+        identity[key] = values[key]
+    return find_row(data, sheet_name, identity)
+
+
+def _payload_matches(data: bytes, sheet_name: str, row_id: str, values: dict) -> bool:
+    current = row_values(data, sheet_name, row_id)
+    for key, value in _cell_values(sheet_name, values).items():
+        if not _same(current.get(key), value):
+            return False
+    return True
+
+
+def _audit(action: str, sheet_name: str, row_id: str | None, values: dict, before, after, reason: str | None = None) -> dict:
+    return {
+        "action": action,
+        "sheet": sheet_name,
+        "row_id": row_id,
+        "actor": values.get("updated_by") or "migration",
+        "source": values.get("source") or "health-workbook",
+        "reason": reason,
+        "external_id": values.get("external_id"),
+        "before_json": None if before is None else json.dumps(before, sort_keys=True, default=str),
+        "after_json": json.dumps(after, sort_keys=True, default=str),
+    }
+
+
+def _reject_readonly(sheet_name: str) -> None:
+    if sheet_name in READ_ONLY or sheet_name not in WRITABLE:
+        raise WorkbookWriteError("writes_disabled", f"{sheet_name} is read-only")
+
+
+def _validate_dates(sheet_name: str, values: dict) -> None:
+    for key, value in values.items():
+        if not isinstance(value, str):
+            continue
+        if key in DATE_EXACT or (sheet_name == "Measurements" and key == "timestamp") or key == "datetime":
+            if len(value) < 10 or value[4] != "-" or value[7] != "-":
+                raise WorkbookWriteError("invalid_timestamp", f"{key} must start with YYYY-MM-DD")
+        if key in DATE_EXACT and len(value) != 10:
+            raise WorkbookWriteError("invalid_timestamp", f"{key} must be YYYY-MM-DD")
 
 
 def _require(record: dict, fields: tuple[str, ...]) -> None:

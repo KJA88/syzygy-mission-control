@@ -15,7 +15,7 @@ from pathlib import Path
 from health_workbook.mutate import add_measurements_sheet, package_parts
 from health_workbook.service import Config, build_logger, serve
 from health_workbook.store import WriteStore
-from health_workbook.workbook import load_workbook
+from health_workbook.workbook import TABLE_HEADERS, load_workbook
 from tests.test_health_workbook import TOKEN, fixture_sheets, write_workbook
 
 MAINTAIN = "phase2a-maintain-token"
@@ -154,10 +154,10 @@ class MeasurementWriteTests(unittest.TestCase):
         self.assertEqual(body["error"], "forbidden")
         status, body = self.request("PATCH", "/v1/measurements/measurements:2", {"reason": "no"}, token=TOKEN)
         self.assertEqual(status, 403)
-        status, body = self.request("POST", "/v1/meals", measurement())
+        status, body = self.request("POST", "/v1/weight-trend", measurement())
         self.assertEqual(status, 405)
         self.assertEqual(body["error"], "writes_disabled")
-        self.assertEqual(body["writes_enabled"], ["measurements"])
+        self.assertEqual(body["writes_enabled"], ["measurements", "daily", "meals", "training", "lifts", "notes"])
         self.assertEqual(self.path.read_bytes(), before)
 
     def test_malformed_request_does_not_change_the_workbook(self):
@@ -239,6 +239,129 @@ class MeasurementWriteTests(unittest.TestCase):
         self.request("POST", "/v1/measurements", measurement(metric="marker-glucose"))
         self.assertNotIn("marker-glucose", self.logs.getvalue())
         self.assertNotIn(MAINTAIN, self.logs.getvalue())
+
+    def test_writable_sheets_append_conflict_and_correct(self):
+        cases = {
+            "daily": (
+                {"date": "2026-02-01", "steps": 1},
+                {"date": "2026-02-02", "steps": 2},
+                {"steps": 9},
+            ),
+            "meals": (
+                {"date": "2026-02-01", "time": "08:00", "food": "syzygy-test-oats", "kcal": 10},
+                {"date": "2026-02-01", "time": "12:00", "food": "syzygy-test-beans", "kcal": 20},
+                {"kcal": 30},
+            ),
+            "training": (
+                {"date": "2026-02-01", "session_id": "SMOKE", "source": "FITBIT", "type": "walk", "burn_role": "do_not_sum"},
+                {"date": "2026-02-01", "session_id": "SMOKE", "source": "POLAR_H10", "type": "walk", "burn_role": "session_hr_burn"},
+                {"calories": 5},
+            ),
+            "lifts": (
+                {"date": "2026-02-01", "exercise": "syzygy-test-row", "reps_set1": 5, "weight_set1": 10},
+                {"date": "2026-02-02", "exercise": "syzygy-test-row", "reps_set1": 5, "weight_set1": 10},
+                {"weight_set1": 15},
+            ),
+            "notes": (
+                {"datetime": "2026-02-01 08:00", "category": "test", "note_paraphrased": "syzygy-test-a"},
+                {"datetime": "2026-02-01 09:00", "category": "test", "note_paraphrased": "syzygy-test-b"},
+                {"severity": "mild"},
+            ),
+        }
+        for sheet, (first, second, correction) in cases.items():
+            with self.subTest(sheet=sheet):
+                before_parts = package_parts(self.path.read_bytes())
+                body = self._attributed(first)
+                status, created = self.request("POST", "/v1/" + sheet, body)
+                self.assertEqual(status, 201, created)
+                self.assertEqual(created["result"], "appended")
+                self.assertTrue(created["backup"])
+                status, replay = self.request("POST", "/v1/" + sheet, body)
+                self.assertEqual(status, 200, replay)
+                self.assertEqual(replay["result"], "exists")
+                self.assertEqual(replay["row_id"], created["row_id"])
+                status, other = self.request("POST", "/v1/" + sheet, self._attributed(second))
+                self.assertEqual(status, 201, other)
+                self.assertNotEqual(other["row_id"], created["row_id"])
+                changed = dict(body)
+                changed.update(correction)
+                status, conflict = self.request("POST", "/v1/" + sheet, changed)
+                self.assertEqual(status, 409, conflict)
+                self.assertEqual(conflict["error"], "conflict")
+                status, patched = self.request("PATCH", "/v1/" + sheet + "/" + created["row_id"], {
+                    "source": body["source"],
+                    "updated_by": "fixture",
+                    "recorded_at": "2026-02-01T12:00:00Z",
+                    "reason": "syzygy test correction",
+                    "fields": correction,
+                })
+                self.assertEqual(status, 200, patched)
+                audit = WriteStore(self.path).audit_entries()
+                self.assertEqual(audit[-1]["action"], "correct")
+                self.assertEqual(audit[-1]["sheet"], created["sheet"])
+                self.assertIsNotNone(audit[-1]["before_json"])
+                after_parts = package_parts(self.path.read_bytes())
+                for name in (
+                    "xl/worksheets/sheet1.xml",
+                    "xl/worksheets/sheet2.xml",
+                    "xl/worksheets/sheet3.xml",
+                    "xl/worksheets/sheet9.xml",
+                ):
+                    self.assertEqual(before_parts[name], after_parts[name], name)
+                self.assertTrue(load_workbook(self.path).valid)
+
+    def test_training_devices_stay_separate_and_daily_stays_one_row(self):
+        first = self._attributed({
+            "date": "2026-03-01", "session_id": "SHARED", "source": "FITBIT", "type": "walk", "burn_role": "do_not_sum",
+        })
+        second = self._attributed({
+            "date": "2026-03-01", "session_id": "SHARED", "source": "POLAR_H10", "type": "walk", "burn_role": "session_hr_burn",
+        })
+        self.assertEqual(self.request("POST", "/v1/training", first)[0], 201)
+        self.assertEqual(self.request("POST", "/v1/training", second)[0], 201)
+        rows = self.request("GET", "/v1/rows?sheet=training&session_id=SHARED&limit=10")[1]["rows"]
+        self.assertEqual(sorted(row["source"] for row in rows if row["session_id"] == "SHARED"), ["FITBIT", "POLAR_H10"])
+        day = self._attributed({"date": "2026-03-02", "steps": 4, "source": "FITBIT"})
+        self.assertEqual(self.request("POST", "/v1/daily", day)[0], 201)
+        other = self._attributed({"date": "2026-03-02", "steps": 8, "source": "SCALE"})
+        status, body = self.request("POST", "/v1/daily", other)
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"], "conflict")
+        listed = self.request("GET", "/v1/rows?sheet=daily&date=2026-03-02&limit=10")[1]
+        self.assertEqual(listed["matched"], 1)
+
+    def test_measurements_migration_is_idempotent(self):
+        bare = Path(self.tmp.name) / "bare.xlsx"
+        write_workbook(bare, fixture_sheets())
+        original = package_parts(bare.read_bytes())
+        first = WriteStore(bare).migrate_measurements()
+        self.assertEqual(first["result"], "migrated")
+        self.assertTrue(first["backup"])
+        added = package_parts(bare.read_bytes())
+        for name, payload in original.items():
+            if name in {"xl/workbook.xml", "xl/_rels/workbook.xml.rels", "[Content_Types].xml"}:
+                continue
+            self.assertEqual(added.get(name), payload)
+        self.assertIn("xl/worksheets/sheet9.xml", added)
+        unchanged = bare.read_bytes()
+        second = WriteStore(bare).migrate_measurements()
+        self.assertEqual(second["result"], "present")
+        self.assertIsNone(second["backup"])
+        self.assertEqual(bare.read_bytes(), unchanged)
+        self.assertEqual(
+            load_workbook(bare).workbook.sheets["Measurements"].headers,
+            list(TABLE_HEADERS["Measurements"]),
+        )
+        self.assertEqual(add_measurements_sheet.__name__, "add_measurements_sheet")
+
+    def _attributed(self, values):
+        body = {
+            "source": values.get("source", "SYZYGY_TEST"),
+            "updated_by": "fixture",
+            "recorded_at": "2026-02-01T00:00:00Z",
+        }
+        body.update(values)
+        return body
 
     def daily_sheet(self):
         return package_parts(self.path.read_bytes())["xl/worksheets/sheet4.xml"]

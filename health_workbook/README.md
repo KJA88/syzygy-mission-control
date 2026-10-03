@@ -1,14 +1,16 @@
-# SYZYGY Health Workbook Service — phase 2A
+# SYZYGY Health Workbook Service
 
-Loopback service for one shared staged workbook. Phase 2A can append and correct rows on the Measurements sheet only. Daily, Meals, Training, Lifts, Notes, Weight Trend, Deficit Bank, and README stay read-only. There is no Cloudflare route and no Mission Control, Fitbit, Macro App, or Polar feeder.
+Loopback service for one shared staged workbook. Maintain callers can append and correct Measurements, Daily, Meals, Training, Lifts, and Notes. Weight Trend, Deficit Bank, and README stay read-only. There is no Cloudflare route and no Mission Control, Fitbit, Macro App, or Polar feeder.
 
-A maintain token is required in addition to the read token. They must differ. The read token cannot write. The maintain token cannot write any sheet except Measurements.
+A maintain token is required in addition to the read token. They must differ. The read token cannot write. Every write requires `source`, `updated_by`, and `recorded_at`. A repeated identity with the same values is idempotent. A repeated identity with different values conflicts and must be corrected with `PATCH`, which requires `reason` and keeps the previous row in the audit log. Daily has one row per date. Training keeps a separate row for each `session_id` and `source`.
+
+`python -m health_workbook.migrate` adds the Measurements sheet when it is absent and does nothing when that sheet is already valid. It uses the same backup, lock, and audit path as a write.
 
 The process opens `HEALTH_WORKBOOK_PATH` with a read and checks that the file is a regular file. Point that variable at a staged copy. Leave the original workbook where it is.
 
 ## Tokens
 
-`Authorization: Bearer <token>` on every request. `HEALTH_WORKBOOK_READ_TOKEN` can read. `HEALTH_WORKBOOK_MAINTAIN_TOKEN` can read and call `POST /v1/measurements` and `PATCH /v1/measurements/{row_id}`. Do not put either token in Git, URLs, or logs.
+`Authorization: Bearer <token>` on every request. `HEALTH_WORKBOOK_READ_TOKEN` can read. `HEALTH_WORKBOOK_MAINTAIN_TOKEN` can read and call the write routes below. Do not put either token in Git, URLs, or logs.
 
 Other write methods return 405. A read token that attempts a write returns 403.
 
@@ -25,10 +27,14 @@ Other write methods return 405. A read token that attempts a write returns 403.
 - `GET /v1/sheets/deficit-bank`
 - `GET /v1/sheets/measurements`
 - `GET /v1/rows?sheet=&date=&from=&to=&session_id=&limit=`
-- `POST /v1/measurements`
-- `PATCH /v1/measurements/{row_id}`
+- `POST /v1/measurements` and `PATCH /v1/measurements/{row_id}`
+- `POST /v1/daily` and `PATCH /v1/daily/{row_id}`
+- `POST /v1/meals` and `PATCH /v1/meals/{row_id}`
+- `POST /v1/training` and `PATCH /v1/training/{row_id}`
+- `POST /v1/lifts` and `PATCH /v1/lifts/{row_id}`
+- `POST /v1/notes` and `PATCH /v1/notes/{row_id}`
 
-`session_id` applies to Training only. `date`, `from`, and `to` are `YYYY-MM-DD`. `limit` defaults to 100, maximum 500, and keeps the last matching rows in sheet order. Measurements is not served.
+`session_id` applies to Training only. `date`, `from`, and `to` are `YYYY-MM-DD`. `limit` defaults to 100, maximum 500, and keeps the last matching rows in sheet order.
 
 Required tabs: README, Daily, Meals, Training, Lifts, Notes, Weight Trend, Deficit Bank. A missing tab or a tabular header that does not match the current workbook makes sheet reads return 503. Status still returns 200 with `valid: false`.
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=SYZYGY Health Workbook Service phase 1 (loopback read-only staging)
+Description=SYZYGY Health Workbook Service (loopback sheet writes)
 After=network-online.target
 Wants=network-online.target
 
@@ -12,6 +12,7 @@ Environment=HEALTH_WORKBOOK_PORT=5052
 Environment=HEALTH_WORKBOOK_PATH=/home/KA_PI/syzygy-fitness-data/staging/KJA_Fitness_Master_Oct12.xlsx
 EnvironmentFile=-/home/KA_PI/syzygy-runtime/health-workbook.env
 ExecStart=/bin/bash /home/KA_PI/syzygy-mission-control/scripts/run-health-workbook.sh
+ReadWritePaths=/home/KA_PI/syzygy-fitness-data
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

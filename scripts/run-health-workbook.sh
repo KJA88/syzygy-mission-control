@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 2A health workbook service. Loopback only. Measurements writes only.
+# Health workbook service. Loopback only. Controlled sheet writes.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,7 +36,7 @@ else
 fi
 
 echo "Starting health workbook service on http://127.0.0.1:${HEALTH_WORKBOOK_PORT}/"
-echo "  mode=measurements-write-staging"
+echo "  mode=sheet-write-staging"
 echo "  workbook=$HEALTH_WORKBOOK_PATH"
 
 exec "$PYTHON" -m health_workbook

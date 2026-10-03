@@ -1,4 +1,4 @@
-"""Loopback health workbook service. Phase 2A writes Measurements only."""
+"""Loopback health workbook service. Controlled writes for the shared sheets."""
 
 from __future__ import annotations
 
@@ -28,6 +28,16 @@ DEFAULT_LIMIT = 100
 MAX_LIMIT = 500
 ROW_FILTERS = {"sheet", "date", "from", "to", "session_id", "limit"}
 TOKEN_QUERY_KEYS = {"token", "access_token", "authorization"}
+WRITE_SHEETS = {
+    "measurements": "Measurements",
+    "daily": "Daily",
+    "meals": "Meals",
+    "training": "Training",
+    "lifts": "Lifts",
+    "notes": "Notes",
+}
+WRITES_ENABLED = list(WRITE_SHEETS)
+READ_ONLY_WRITES = {"weight-trend", "weighttrend", "deficit-bank", "deficitbank", "readme"}
 
 
 class ApiError(Exception):
@@ -131,9 +141,12 @@ class App:
             if error.detail:
                 response["detail"] = error.detail
             if error.error == "writes_disabled":
-                response["writes_enabled"] = ["measurements"]
+                response["writes_enabled"] = WRITES_ENABLED
         except WorkbookWriteError as error:
-            status = 409 if error.code in {"measurements_missing", "conflict"} else 400
+            if error.code == "writes_disabled":
+                status = 405
+            else:
+                status = 409 if error.code in {"measurements_missing", "conflict", "sheet_missing"} else 400
             response = {"error": error.code, "detail": error.detail}
         except WriteFault:
             status = 500
@@ -194,10 +207,10 @@ class App:
         order = workbook.sheet_order if workbook else []
         return {
             "service": SERVICE,
-            "phase": "2a",
-            "mode": "measurements-write-staging",
+            "phase": "2b",
+            "mode": "sheet-write-staging",
             "read_only": False,
-            "writes_enabled": ["measurements"],
+            "writes_enabled": WRITES_ENABLED,
             "host": self.config.host,
             "public_route": False,
             "measurements_enabled": "Measurements" in order,
@@ -222,13 +235,16 @@ class App:
             raise ApiError(403, "forbidden", "Maintain permission is required")
         if len(raw) > 1024 * 1024:
             raise ApiError(413, "body_too_large")
-        if method == "POST" and path == "/v1/measurements":
-            return self._measurement_result(self._store().append(self._json_object(raw)), 201)
-        prefix = "/v1/measurements/"
-        if method == "PATCH" and path.startswith(prefix):
-            result = self._store().correct(path[len(prefix):], self._json_object(raw))
-            return self._measurement_result(result, 200)
-        raise ApiError(405, "writes_disabled", "Only Measurements writes are enabled")
+        sheet_name, row_id, blocked = _write_target(method, path)
+        if blocked:
+            raise ApiError(405, "writes_disabled", "Weight Trend, Deficit Bank, and README are read-only")
+        if sheet_name is None:
+            raise ApiError(405, "writes_disabled", "That sheet does not accept writes")
+        payload = self._json_object(raw)
+        if method == "POST":
+            return self._measurement_result(self._store().append_sheet(sheet_name, payload), 201)
+        result = self._store().correct_sheet(sheet_name, row_id or "", payload)
+        return self._measurement_result(result, 200)
 
     def _json_object(self, raw: bytes) -> dict:
         try:
@@ -331,6 +347,22 @@ class App:
             raise ApiError(400, "unexpected_parameter", "Unexpected parameter: " + ", ".join(sorted(unknown)))
         if any(len(values) != 1 for values in parsed.values()):
             raise ApiError(400, "repeated_parameter")
+
+
+def _write_target(method: str, path: str) -> tuple[str | None, str | None, bool]:
+    if method not in {"POST", "PATCH"} or not path.startswith("/v1/"):
+        return None, None, False
+    name = path[4:]
+    if method == "POST":
+        key, row_id = name, None
+    else:
+        key, separator, row_id = name.partition("/")
+        if separator == "" or row_id == "" or "/" in row_id:
+            return None, None, False
+    normalized = key.casefold().replace("_", "-")
+    if normalized in READ_ONLY_WRITES:
+        return None, None, True
+    return WRITE_SHEETS.get(normalized), row_id, False
 
 
 def _optional_day(value: str | None, label: str) -> str | None:

@@ -204,10 +204,10 @@ class HttpFixture(unittest.TestCase):
         status, body = self.request("GET", "/v1/status")
         self.assertEqual(status, 200)
         self.assertEqual(body["service"], "syzygy-health-workbook")
-        self.assertEqual(body["phase"], "2a")
-        self.assertEqual(body["mode"], "measurements-write-staging")
+        self.assertEqual(body["phase"], "2b")
+        self.assertEqual(body["mode"], "sheet-write-staging")
         self.assertFalse(body["read_only"])
-        self.assertEqual(body["writes_enabled"], ["measurements"])
+        self.assertEqual(body["writes_enabled"], ["measurements", "daily", "meals", "training", "lifts", "notes"])
         self.assertFalse(body["public_route"])
         self.assertFalse(body["measurements_enabled"])
         self.assertTrue(body["valid"])
@@ -461,10 +461,10 @@ class WorkbookValidationTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 Config.from_env()
 
-    def test_only_measurements_writes_are_enabled(self):
+    def test_reporting_sheets_stay_read_only(self):
         source = (ROOT / "health_workbook" / "service.py").read_text(encoding="utf-8")
-        self.assertIn('path == "/v1/measurements"', source)
-        self.assertIn("Only Measurements writes are enabled", source)
-        self.assertNotIn('"/v1/daily"', source)
-        self.assertNotIn('"/v1/meals"', source)
+        self.assertIn("weight-trend", source)
+        self.assertIn("deficit-bank", source)
+        self.assertIn("are read-only", source)
+        self.assertNotIn('"/v1/weight-trend"', source)
 

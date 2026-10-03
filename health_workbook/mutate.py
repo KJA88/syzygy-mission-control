@@ -1,4 +1,4 @@
-"""Edit the Measurements sheet without rewriting any other workbook part."""
+"""Edit one worksheet without rewriting any other workbook part."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import io
 import re
 import zipfile
 
-from health_workbook.workbook import TABLE_HEADERS, inspect_workbook
+from health_workbook.workbook import TABLE_HEADERS, inspect_workbook, sheet_key
 
 MEASUREMENTS = "Measurements"
 _HEADERS = TABLE_HEADERS[MEASUREMENTS]
@@ -68,52 +68,79 @@ def add_measurements_sheet(data: bytes) -> bytes:
 
 
 def append_measurement(data: bytes, values: dict) -> tuple[bytes, str]:
-    part = _require_measurements(data)
-    sheet = package_parts(data)[part].decode("utf-8")
-    row_number = _next_row_number(sheet)
-    row_xml = _row_xml(row_number, values)
-    updated = _insert(sheet, "</sheetData>", row_xml)
-    rebuilt = _repack(data, {part: updated.encode("utf-8")})
-    _assert_protected(data, rebuilt, part)
-    return rebuilt, f"measurements:{row_number}"
+    return append_row(data, MEASUREMENTS, values)
 
 
 def patch_measurement(data: bytes, row_id: str, values: dict) -> tuple[bytes, dict]:
-    row_number = _row_number(row_id)
-    part = _require_measurements(data)
-    book = inspect_workbook(data)
-    current = next((row for row in book.sheets[MEASUREMENTS].rows if row["row"] == row_number), None)
-    if current is None:
-        raise WorkbookWriteError("row_missing", "Measurements row was not found")
-    before = {key: current.get(key) for key in _HEADERS}
-    merged = dict(before)
-    merged.update(values)
-    sheet = package_parts(data)[part].decode("utf-8")
-    pattern = re.compile(rf'<row r="{row_number}"[^>]*>.*?</row>', re.DOTALL)
-    updated, count = pattern.subn(_row_xml(row_number, merged), sheet, count=1)
-    if count != 1:
-        raise WorkbookWriteError("row_missing", "Measurements row was not found")
-    rebuilt = _repack(data, {part: updated.encode("utf-8")})
-    _assert_protected(data, rebuilt, part)
-    return rebuilt, before
+    return patch_row(data, MEASUREMENTS, row_id, values)
 
 
 def find_measurement(data: bytes, source: str, external_id: str | None) -> str | None:
     if not external_id:
         return None
+    return find_row(data, MEASUREMENTS, {"source": source, "external_id": external_id})
+
+
+def append_row(data: bytes, sheet_name: str, values: dict) -> tuple[bytes, str]:
+    part = _require_sheet(data, sheet_name)
+    headers = TABLE_HEADERS[sheet_name]
+    sheet = package_parts(data)[part].decode("utf-8")
+    row_number = _next_row_number(sheet)
+    updated = _insert(sheet, "</sheetData>", _row_xml(row_number, values, headers))
+    rebuilt = _repack(data, {part: updated.encode("utf-8")})
+    _assert_protected(data, rebuilt, part, sheet_name)
+    return rebuilt, f"{sheet_key(sheet_name)}:{row_number}"
+
+
+def patch_row(data: bytes, sheet_name: str, row_id: str, values: dict) -> tuple[bytes, dict]:
+    row_number = _row_number(sheet_name, row_id)
+    part = _require_sheet(data, sheet_name)
+    headers = TABLE_HEADERS[sheet_name]
     book = inspect_workbook(data)
-    sheet = book.sheets.get(MEASUREMENTS)
+    current = next((row for row in book.sheets[sheet_name].rows if row["row"] == row_number), None)
+    if current is None:
+        raise WorkbookWriteError("row_missing", f"{sheet_name} row was not found")
+    before = {key: current.get(key) for key in headers}
+    merged = dict(before)
+    merged.update(values)
+    sheet = package_parts(data)[part].decode("utf-8")
+    pattern = re.compile(rf'<row r="{row_number}"[^>]*>.*?</row>', re.DOTALL)
+    updated, count = pattern.subn(_row_xml(row_number, merged, headers), sheet, count=1)
+    if count != 1:
+        raise WorkbookWriteError("row_missing", f"{sheet_name} row was not found")
+    rebuilt = _repack(data, {part: updated.encode("utf-8")})
+    _assert_protected(data, rebuilt, part, sheet_name)
+    return rebuilt, before
+
+
+def find_row(data: bytes, sheet_name: str, identity: dict) -> str | None:
+    book = inspect_workbook(data)
+    sheet = book.sheets.get(sheet_name)
     if sheet is None:
-        raise WorkbookWriteError("measurements_missing", "Measurements sheet is missing")
+        code = "measurements_missing" if sheet_name == MEASUREMENTS else "sheet_missing"
+        raise WorkbookWriteError(code, f"{sheet_name} sheet is missing")
     for row in sheet.rows:
-        if row.get("source") == source and row.get("external_id") == external_id:
+        if all(_same(row.get(key), identity[key]) for key in identity):
             return row["row_id"]
     return None
 
 
+def row_values(data: bytes, sheet_name: str, row_id: str) -> dict:
+    row_number = _row_number(sheet_name, row_id)
+    book = inspect_workbook(data)
+    current = next((row for row in book.sheets[sheet_name].rows if row["row"] == row_number), None)
+    if current is None:
+        raise WorkbookWriteError("row_missing", f"{sheet_name} row was not found")
+    return {key: current.get(key) for key in TABLE_HEADERS[sheet_name]}
+
+
 def _require_measurements(data: bytes) -> str:
+    return _require_sheet(data, MEASUREMENTS)
+
+
+def _require_sheet(data: bytes, sheet_name: str) -> str:
     try:
-        return _measurements_part(data)
+        return _sheet_part(data, sheet_name)
     except WorkbookWriteError:
         raise
     except ValueError as error:
@@ -121,6 +148,10 @@ def _require_measurements(data: bytes) -> str:
 
 
 def _measurements_part(data: bytes) -> str:
+    return _sheet_part(data, MEASUREMENTS)
+
+
+def _sheet_part(data: bytes, sheet_name: str) -> str:
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         workbook = archive.read("xl/workbook.xml")
         rels = archive.read("xl/_rels/workbook.xml.rels")
@@ -134,11 +165,12 @@ def _measurements_part(data: bytes) -> str:
         for rel in rel_root.findall(PKG_NS + "Relationship")
     }
     for sheet in root.findall(NS + "sheets/" + NS + "sheet"):
-        if sheet.attrib.get("name") != MEASUREMENTS:
+        if sheet.attrib.get("name") != sheet_name:
             continue
         part = _part_path(targets.get(sheet.attrib.get(REL_NS + "id"), ""))
         return part
-    raise WorkbookWriteError("measurements_missing", "Measurements sheet is missing")
+    code = "measurements_missing" if sheet_name == MEASUREMENTS else "sheet_missing"
+    raise WorkbookWriteError(code, f"{sheet_name} sheet is missing")
 
 
 def _assert_existing_parts(before: bytes, after: bytes) -> None:
@@ -152,9 +184,9 @@ def _assert_existing_parts(before: bytes, after: bytes) -> None:
             raise WorkbookWriteError("protected_sheet_changed", "A sheet other than Measurements changed")
 
 
-def _assert_protected(before: bytes, after: bytes, measurements_part: str) -> None:
-    if protected_digest(before, measurements_part) != protected_digest(after, measurements_part):
-        raise WorkbookWriteError("protected_sheet_changed", "A sheet other than Measurements changed")
+def _assert_protected(before: bytes, after: bytes, sheet_part: str, sheet_name: str) -> None:
+    if protected_digest(before, sheet_part) != protected_digest(after, sheet_part):
+        raise WorkbookWriteError("protected_sheet_changed", f"A sheet other than {sheet_name} changed")
     inspect_workbook(after)
 
 
@@ -199,9 +231,10 @@ def _empty_sheet_xml() -> str:
     )
 
 
-def _row_xml(row_number: int, values: dict) -> str:
+def _row_xml(row_number: int, values: dict, headers: tuple[str, ...] | None = None) -> str:
+    columns = headers or _HEADERS
     cells = []
-    for column, name in enumerate(_HEADERS, start=1):
+    for column, name in enumerate(columns, start=1):
         value = values.get(name)
         if value is None or value == "":
             continue
@@ -233,9 +266,19 @@ def _next_row_number(sheet_xml: str) -> int:
     return max(numbers, default=1) + 1
 
 
-def _row_number(row_id: str) -> int:
-    match = re.fullmatch(r"measurements:(\d+)", row_id or "")
+def _row_number(sheet_name: str, row_id: str) -> int:
+    match = re.fullmatch(re.escape(sheet_key(sheet_name)) + r":(\d+)", row_id or "")
     if match is None or int(match.group(1)) <= 1:
-        raise WorkbookWriteError("row_missing", "Measurements row was not found")
+        raise WorkbookWriteError("row_missing", f"{sheet_name} row was not found")
     return int(match.group(1))
+
+
+def _same(left: object, right: object) -> bool:
+    if left == right:
+        return True
+    if isinstance(left, bool) or isinstance(right, bool):
+        return False
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return float(left) == float(right)
+    return False
 
