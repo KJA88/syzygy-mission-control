@@ -1482,6 +1482,109 @@
     }
   }
 
+  let healthPayload = null;
+  let healthWindow = 7;
+
+  function sleepText(minutes) {
+    const value = Number(minutes);
+    if (!Number.isFinite(value)) return plainNum(minutes);
+    const whole = Math.round(value);
+    const hours = Math.floor(whole / 60);
+    const rest = whole % 60;
+    return hours + "h " + rest + "m";
+  }
+
+  function healthValue(card) {
+    if (!card || card.present !== true) return "—";
+    if (card.value2 !== null && card.value2 !== undefined && card.value2 !== "") {
+      return plainNum(card.value) + "/" + plainNum(card.value2) + (card.unit ? " " + card.unit : "");
+    }
+    if (card.id === "sleep") return sleepText(card.value);
+    return plainNum(card.value) + (card.unit ? " " + card.unit : "");
+  }
+
+  function healthCard(card) {
+    const meta = card.present === true
+      ? (card.source || "source unavailable") + (card.date ? " · " + card.date : "")
+      : "unavailable";
+    return '<article class="card"><h2>' + esc(card.label || "Metric") + "</h2><p>" +
+      esc(healthValue(card)) + "</p><p>" + esc(meta) + "</p></article>";
+  }
+
+  function recentCard(row) {
+    const paired = row.value2 !== null && row.value2 !== undefined && row.value2 !== "";
+    const value = paired
+      ? plainNum(row.value) + "/" + plainNum(row.value2)
+      : plainNum(row.value);
+    const unit = row.unit ? " " + row.unit : "";
+    return '<article class="card"><h2>' + esc(row.metric || "Measurement") + "</h2>" +
+      "<p>" + esc(value + unit) + "</p>" +
+      "<p>" + esc(row.timestamp || row.date || "—") + "</p>" +
+      "<p>" + esc(row.source || "source unavailable") +
+      (row.device ? " · " + esc(row.device) : "") + "</p></article>";
+  }
+
+  function trendLine(panelId, point) {
+    if (panelId === "blood_pressure") {
+      return (point.timestamp || point.date || "—") + " · " +
+        plainNum(point.systolic) + "/" + plainNum(point.diastolic) + " mmHg · " +
+        (point.source || "source unavailable");
+    }
+    return (point.timestamp || point.date || "—") + " · " + plainNum(point.value) +
+      (point.unit ? " " + point.unit : "") + " · " + (point.source || "source unavailable");
+  }
+
+  function renderHealth(payload) {
+    healthPayload = payload;
+    const cardsNode = document.getElementById("health-cards");
+    const recentNode = document.getElementById("health-recent");
+    const trendsNode = document.getElementById("health-trends");
+    const online = payload && payload.available === true;
+    const cards = online && Array.isArray(payload.cards) ? payload.cards : [];
+    const recent = online && Array.isArray(payload.recent) ? payload.recent : [];
+    const trends = online && payload.trends ? payload.trends : {};
+    if (!online) {
+      setText("health-status", "Health UNKNOWN / OFFLINE");
+      setText("overview-health", "UNKNOWN / OFFLINE");
+    } else {
+      const live = cards.filter(function (card) { return card.present === true; }).length;
+      setText("health-status", "Workbook read-only · " + live + " current");
+      const weight = cards.filter(function (card) { return card.id === "weight" && card.present === true; })[0];
+      setText("overview-health", weight ? healthValue(weight) : (live ? live + " current" : "No current metrics"));
+    }
+    if (cardsNode) {
+      cardsNode.innerHTML = cards.length
+        ? cards.map(healthCard).join("")
+        : '<p class="hint">No health summary.</p>';
+    }
+    if (recentNode) {
+      recentNode.innerHTML = recent.length
+        ? recent.map(recentCard).join("")
+        : '<p class="hint">No recent measurements.</p>';
+    }
+    if (trendsNode) {
+      const ids = ["weight", "body_fat", "hrv", "resting_hr", "sleep", "blood_pressure", "glucose"];
+      trendsNode.innerHTML = ids.map(function (id) {
+        const panel = trends[id] || { label: id, days_7: [], days_30: [] };
+        const points = healthWindow === 30 ? (panel.days_30 || []) : (panel.days_7 || []);
+        const lines = points.length
+          ? points.map(function (point) { return "<p>" + esc(trendLine(id, point)) + "</p>"; }).join("")
+          : '<p class="hint">No points in this window.</p>';
+        return '<article class="card"><h2>' + esc(panel.label || id) + "</h2>" + lines + "</article>";
+      }).join("");
+    }
+  }
+
+  async function refreshHealth() {
+    try {
+      const response = await fetch("/api/health/summary", { cache: "no-store" });
+      const payload = response.ok ? await response.json() : null;
+      renderHealth(payload);
+    } catch (err) {
+      renderHealth(null);
+    }
+  }
+
   async function refreshWorkouts() {
     try {
       const responses = await Promise.all([
@@ -1511,6 +1614,15 @@
     document.querySelectorAll(".nav-button").forEach(function (button) {
       button.addEventListener("click", function () {
         showView(button.getAttribute("data-view"));
+      });
+    });
+    document.querySelectorAll("[data-health-window]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        healthWindow = button.getAttribute("data-health-window") === "30" ? 30 : 7;
+        document.querySelectorAll("[data-health-window]").forEach(function (item) {
+          item.classList.toggle("active", item === button);
+        });
+        if (healthPayload) renderHealth(healthPayload);
       });
     });
     document.querySelectorAll(".subtab").forEach(function (button) {
@@ -1552,6 +1664,7 @@
       refreshPerception();
       refreshHome();
       refreshMissions();
+      refreshHealth();
       els.fetchError.classList.add("hidden");
       els.refreshBadge.textContent = "refresh " + Math.round(REFRESH_MS / 1000) + "s";
       els.refreshBadge.className = "pill GREEN";

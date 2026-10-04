@@ -5,6 +5,8 @@ Serves static UI assets and Guardian outputs (snapshot.json + events.jsonl).
 Named skill requests and the engineering JSON path are served on this same
 server. Does not probe Guardian MCP catalogs. Read-only workout summaries may
 call the local Fitbit MCP at 127.0.0.1:8010 and do not receive OAuth tokens.
+The Health view reads the loopback health workbook service with the read token
+and does not write the workbook.
 
 The origin stays on the Pi. A phone may reach only this UI through the
 dedicated Cloudflare Access hostname and tunnel. Do not publish port 9070
@@ -293,6 +295,36 @@ def _workout_offline():
     return {"available": False, "reason": "FITBIT_UNAVAILABLE", "source": "fitbit", "workouts": []}
 
 
+def _health_offline(reason="UNCONFIGURED"):
+    return {
+        "available": False,
+        "reason": reason,
+        "source": "health-workbook",
+        "cards": [],
+        "recent": [],
+        "trends": {},
+    }
+
+
+def _health_from_env():
+    try:
+        from health.view import open_health
+        return open_health()
+    except Exception:
+        return None
+
+
+def _health_summary(view):
+    if view is None:
+        return 200, _health_offline()
+    try:
+        return 200, view.summary()
+    except Exception as error:
+        code = getattr(error, "code", None)
+        reason = code if isinstance(code, str) and code else "WORKBOOK_UNAVAILABLE"
+        return 200, _health_offline(reason)
+
+
 def _workout_recent(workouts, qs):
     if set(qs) - {"limit"}:
         return 400, {"available": False, "reason": "MALFORMED_PARAMETERS", "source": "fitbit", "workouts": []}
@@ -340,7 +372,7 @@ def relay_stream(destination, upstream, chunk_size=8192):
             closer()
 
 
-def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None, missions=None, workouts=None):
+def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None, missions=None, workouts=None, health=None):
     snapshot_path = state_dir / "snapshot.json"
     events_path = state_dir / "events.jsonl"
 
@@ -432,6 +464,8 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 return self._json(200, _mission_post(missions, parsed.path, payload))
             if parsed.path.startswith("/api/workouts/"):
                 return self._json(405, {"available": False, "reason": "READ_ONLY", "source": "fitbit"})
+            if parsed.path == "/api/health/summary":
+                return self._json(405, {"available": False, "reason": "READ_ONLY", "source": "health-workbook"})
             if owner is None:
                 return self._json(503, {"accepted": False, "result": "rejected", "reason": "CONTROL_OWNER_UNAVAILABLE"})
             if parsed.path == "/api/roarm/skills":
@@ -519,6 +553,11 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 return self._json(code, payload)
             if path == "/api/workouts/summary":
                 code, payload = _workout_summary(workouts, qs)
+                return self._json(code, payload)
+            if path == "/api/health/summary":
+                if qs:
+                    return self._json(400, _health_offline("MALFORMED_PARAMETERS"))
+                code, payload = _health_summary(health)
                 return self._json(code, payload)
             if path == "/api/devices":
                 cameras = []
@@ -724,7 +763,7 @@ def main(argv=None):
     threading.Thread(target=heartbeat_loop, name="control-owner-heartbeat", daemon=True).start()
     handler = make_handler(
         state_dir, ui_dir, args.hard_stale_s, args.events_limit,
-        owner, vision, home, missions, _workouts_from_env(),
+        owner, vision, home, missions, _workouts_from_env(), _health_from_env(),
     )
     httpd = ThreadingHTTPServer((args.host, args.port), handler)
     sys.stderr.write(

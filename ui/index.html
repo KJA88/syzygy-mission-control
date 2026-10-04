@@ -29,6 +29,7 @@
       <button type="button" class="nav-button" data-view="home">Home</button>
       <button type="button" class="nav-button" data-view="missions">Missions</button>
       <button type="button" class="nav-button" data-view="training">Training</button>
+      <button type="button" class="nav-button" data-view="health">Health</button>
       <button type="button" class="nav-button" data-view="events">Events</button>
       <button type="button" class="nav-button" data-view="system">System</button>
       <button type="button" class="nav-button" data-view="settings">Settings</button>
@@ -53,6 +54,7 @@
           <article class="card"><h2>Home</h2><p id="overview-home">Waiting for Home Assistant</p></article>
           <article class="card"><h2>Missions</h2><p id="overview-missions">Waiting for Mission Engine</p></article>
           <article class="card"><h2>Training</h2><p id="overview-training">Waiting for Fitbit</p></article>
+          <article class="card"><h2>Health</h2><p id="overview-health">Waiting for workbook</p></article>
           <article class="card"><h2>Robots</h2><p id="overview-robots">Waiting for RoArm</p></article>
           <article class="card"><h2>Activity</h2><p id="overview-activity">No events yet</p></article>
         </div>
@@ -190,6 +192,26 @@
         <div id="training-latest" class="cards-grid"></div>
         <h2>Recent workouts</h2>
         <div id="training-recent" class="cards-grid"></div>
+      </section>
+
+      <section id="view-health" class="view">
+        <div class="section-head">
+          <h1>Health</h1>
+          <p id="health-status" class="hint">Waiting for workbook</p>
+        </div>
+        <p class="hint">Read-only daily summaries and measurements from the health workbook service. Workouts stay on Training.</p>
+        <h2>Current</h2>
+        <div id="health-cards" class="cards-grid"></div>
+        <h2>Recent measurements</h2>
+        <div id="health-recent" class="cards-grid"></div>
+        <div class="section-head">
+          <h2>Trends</h2>
+          <div>
+            <button type="button" class="subtab active" data-health-window="7">7 days</button>
+            <button type="button" class="subtab" data-health-window="30">30 days</button>
+          </div>
+        </div>
+        <div id="health-trends" class="cards-grid"></div>
       </section>
 
       <section id="view-events" class="view">
