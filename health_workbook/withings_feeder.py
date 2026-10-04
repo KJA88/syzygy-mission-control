@@ -31,7 +31,16 @@ MEASURE_URL = "https://wbsapi.withings.net/measure"
 ENV_FILE = "/home/KA_PI/syzygy-runtime/withings.env"
 KG_TO_LB = 2.2046226218
 MEASURE_TYPES = "1,5,6,8,9,10,11,76,77,88,170,226"
-MODEL_IDS = {45: BPM_CONNECT}
+# Known model ids for this account. Any other id stays unmapped.
+MODEL_IDS = {
+    16: BODY_SMART,
+    45: BPM_CONNECT,
+}
+MODEL_NAMES = {
+    "body smart": BODY_SMART,
+    "wbs13": BODY_SMART,
+    "bpm connect": BPM_CONNECT,
+}
 # Mass types are kilograms. Ratio, index, pulse, and BMR stay in the API unit.
 METRICS = {
     1: ("weight", "lb", True),
@@ -59,17 +68,19 @@ class WithingsError(Exception):
 
 def device_kind(device: dict) -> str | None:
     model_id = device.get("model_id")
-    if model_id in MODEL_IDS:
+    if isinstance(model_id, int) and not isinstance(model_id, bool) and model_id in MODEL_IDS:
         return MODEL_IDS[model_id]
     name = device.get("model")
     if not isinstance(name, str):
         return None
-    folded = " ".join(name.casefold().split())
-    if folded in {"body smart", "wbs13"}:
-        return BODY_SMART
-    if folded == "bpm connect":
-        return BPM_CONNECT
-    return None
+    return MODEL_NAMES.get(" ".join(name.casefold().split()))
+
+
+def _model_id(device: dict) -> int | None:
+    model_id = device.get("model_id")
+    if isinstance(model_id, bool) or not isinstance(model_id, int):
+        return None
+    return model_id
 
 
 def decode_measure(measure: dict):
@@ -104,7 +115,7 @@ def map_withings(devices: list, groups: list, dates: list[str]) -> tuple[list[di
         kind = device_kind(device)
         ident = device.get("deviceid")
         if kind and isinstance(ident, str) and ident:
-            kinds[ident] = kind
+            kinds[ident] = (kind, _model_id(device))
     wanted = set(dates)
     rows = []
     seen = set()
@@ -114,7 +125,8 @@ def map_withings(devices: list, groups: list, dates: list[str]) -> tuple[list[di
         if not isinstance(group, dict):
             skipped += 1
             continue
-        kind = kinds.get(group.get("deviceid"))
+        record = kinds.get(group.get("deviceid"))
+        kind, model_id = record if record else (None, None)
         grpid = group.get("grpid")
         epoch = group.get("date")
         if kind is None or grpid is None or isinstance(epoch, bool) or not isinstance(epoch, (int, float)):
@@ -134,14 +146,15 @@ def map_withings(devices: list, groups: list, dates: list[str]) -> tuple[list[di
             number = decode_measure(measure)
             if number is not None:
                 decoded[kind_type] = number
+        context = None if model_id is None else "model_id=" + str(model_id)
         if kind == BPM_CONNECT:
             systolic = decoded.get(10)
             diastolic = decoded.get(9)
             if systolic is not None and diastolic is not None:
-                _add(rows, seen, _reading(grpid, stamp, "blood_pressure", _num(systolic), "mmHg", kind, _num(diastolic)))
+                _add(rows, seen, _reading(grpid, stamp, "blood_pressure", _num(systolic), "mmHg", kind, _num(diastolic), context))
             pulse = decoded.get(11)
             if pulse is not None:
-                _add(rows, seen, _reading(grpid, stamp, "heart_rate", _num(pulse), "bpm", kind, None))
+                _add(rows, seen, _reading(grpid, stamp, "heart_rate", _num(pulse), "bpm", kind, None, context))
             continue
         for type_id, (metric, unit, mass) in METRICS.items():
             if type_id in (9, 10) or type_id not in decoded:
@@ -149,7 +162,7 @@ def map_withings(devices: list, groups: list, dates: list[str]) -> tuple[list[di
             value = kg_to_lb(decoded[type_id]) if mass else _num(decoded[type_id])
             if value is None:
                 continue
-            _add(rows, seen, _reading(grpid, stamp, metric, value, unit, kind, None))
+            _add(rows, seen, _reading(grpid, stamp, metric, value, unit, kind, None, context))
             if metric in DAILY_FROM:
                 previous = latest[day].get(metric)
                 if previous is None or int(epoch) >= previous[0]:
@@ -162,7 +175,7 @@ def map_withings(devices: list, groups: list, dates: list[str]) -> tuple[list[di
     return rows, daily, skipped
 
 
-def _reading(grpid, stamp, metric, value, unit, device, value2) -> dict:
+def _reading(grpid, stamp, metric, value, unit, device, value2, context) -> dict:
     body = {
         "timestamp": stamp,
         "metric": metric,
@@ -175,6 +188,8 @@ def _reading(grpid, stamp, metric, value, unit, device, value2) -> dict:
     }
     if value2 is not None:
         body["value2"] = value2
+    if context:
+        body["context"] = context
     return body
 
 
@@ -382,6 +397,8 @@ def sync_withings(load, workbook: WorkbookClient, dates: list[str], recorded_at:
         result["auth"] = loaded[2]
     readings, daily, skipped = map_withings(devices, groups, dates)
     result["skipped_groups"] = skipped
+    result["recognized"] = _recognized(devices)
+    result["scale_groups"] = _group_count(readings, BODY_SMART)
     for reading in readings:
         _apply_measurement(workbook, reading, recorded_at, result)
     for day in dates:
@@ -465,6 +482,32 @@ def _apply_withings_daily(workbook: WorkbookClient, day: str, incoming: dict, re
             result["conflicts"].append(day + ":row")
             return
         result["errors"] += 1
+
+
+def _recognized(devices: list) -> list[dict]:
+    found = []
+    seen = set()
+    for device in devices or []:
+        if not isinstance(device, dict):
+            continue
+        kind = device_kind(device)
+        model_id = _model_id(device)
+        if kind is None or model_id is None or (model_id, kind) in seen:
+            continue
+        seen.add((model_id, kind))
+        found.append({"model_id": model_id, "device": kind})
+    return sorted(found, key=lambda item: item["model_id"])
+
+
+def _group_count(readings: list[dict], device: str) -> int:
+    groups = set()
+    for reading in readings:
+        if reading.get("device") != device:
+            continue
+        parts = str(reading.get("external_id") or "").split(":")
+        if len(parts) >= 3:
+            groups.add(parts[1])
+    return len(groups)
 
 
 def _remember(result: dict, metric: str) -> None:

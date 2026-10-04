@@ -105,6 +105,42 @@ class WithingsMappingTests(unittest.TestCase):
         self.assertEqual(daily[DAY]["body_fat_pct"], 20.5)
         self.assertGreater(skipped, 0)
 
+    def test_model_id_16_without_name_is_body_smart(self):
+        from health_workbook.withings_feeder import device_kind
+
+        self.assertEqual(device_kind({"model_id": 16}), "BODY_SMART")
+        self.assertIsNone(device_kind({"model_id": 99}))
+        self.assertIsNone(device_kind({"model_id": 6, "model": "Body Cardio"}))
+        self.assertEqual(device_kind({"model": "Body Smart"}), "BODY_SMART")
+        readings, daily, skipped = map_withings(
+            [
+                {"deviceid": "scale-16", "model_id": 16},
+                {"deviceid": "unknown", "model_id": 99},
+            ],
+            [
+                {
+                    "grpid": 16,
+                    "deviceid": "scale-16",
+                    "date": _epoch(DAY),
+                    "measures": [
+                        {"type": 1, "value": 80000, "unit": -3},
+                        {"type": 6, "value": 205, "unit": -1},
+                        {"type": 11, "value": 72, "unit": 0},
+                    ],
+                },
+                {"grpid": 99, "deviceid": "unknown", "date": _epoch(DAY), "measures": [{"type": 1, "value": 1, "unit": 0}]},
+            ],
+            [DAY],
+        )
+        by_id = {row["external_id"]: row for row in readings}
+        self.assertEqual(set(by_id), {"withings:16:weight", "withings:16:body_fat_pct", "withings:16:heart_rate"})
+        self.assertEqual(by_id["withings:16:weight"]["device"], "BODY_SMART")
+        self.assertEqual(by_id["withings:16:weight"]["context"], "model_id=16")
+        self.assertEqual(daily[DAY]["weight_lb"], kg_to_lb(80))
+        self.assertEqual(daily[DAY]["body_fat_pct"], 20.5)
+        self.assertNotIn("heart_rate", daily[DAY])
+        self.assertEqual(skipped, 1)
+
     def test_token_refresh_persists_without_returning_secrets(self):
         seen = {"meas": 0}
 
