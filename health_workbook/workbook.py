@@ -65,6 +65,8 @@ TABLE_HEADERS = {
 }
 
 PROSE_SHEETS = {"README", "Deficit Bank"}
+# Table sheets whose first non-ISO-date row starts a footer (totals/summary block), not data rows.
+FOOTER_SHEETS = {"Weight Trend", "Meals"}
 DATE_FIELDS = {
     "Daily": "date",
     "Meals": "date",
@@ -267,7 +269,7 @@ def _table_sheet(name: str, rows: list[tuple[int, dict[int, object]]]) -> Sheet:
     seen_gap = False
     for number, cells in rows[header_at + 1:]:
         record = _record(name, number, headers, cells)
-        if name == "Weight Trend" and (seen_gap or not _is_iso_day(record.get("date"))):
+        if name in FOOTER_SHEETS and (seen_gap or not _is_iso_day(record.get("date"))):
             seen_gap = True
             footer.append(_prose_item(name, number, cells))
             continue

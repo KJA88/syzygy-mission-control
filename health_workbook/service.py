@@ -214,6 +214,7 @@ class App:
             "host": self.config.host,
             "public_route": False,
             "measurements_enabled": "Measurements" in order,
+            "schema_version": self._schema_version(loaded),
             "workbook_present": loaded.present,
             "workbook_name": self.config.workbook_path.name if loaded.present else None,
             "sha256": workbook.sha256 if workbook else None,
@@ -223,6 +224,15 @@ class App:
             "sheets": [name for name in order if name in REQUIRED_SHEETS or name == "Measurements"],
             "unserved_sheets": [name for name in order if name not in REQUIRED_SHEETS and name != "Measurements"],
         }
+
+    def _schema_version(self, loaded: LoadResult):
+        if not loaded.valid:
+            return None
+        try:
+            from health_workbook.formulas import schema_version
+            return schema_version(self.config.workbook_path.read_bytes())
+        except (OSError, ValueError, KeyError):
+            return None
 
     def _loaded(self) -> LoadResult:
         loaded = load_workbook(self.config.workbook_path)

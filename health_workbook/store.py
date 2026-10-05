@@ -11,6 +11,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 
+from health_workbook import formulas
 from health_workbook.mutate import (
     WorkbookWriteError,
     _same,
@@ -79,11 +80,33 @@ class WriteStore:
             })
             return {"result": "migrated", "sheet": "Measurements", "backup": backup.name}
 
+    def migrate_schema_v2(self) -> dict:
+        """Daily.day_status + formula-driven deficit logic + Meals footer formulas. Idempotent."""
+        with self._locked() as connection:
+            current = self._read()
+            new_bytes = formulas.migrate_v2(current)
+            if new_bytes is current:
+                return {"result": "present", "schema_version": formulas.schema_version(current), "backup": None}
+            self._check(new_bytes, "Daily")
+            backup = self._commit(connection, current, new_bytes, {
+                "action": "migrate",
+                "sheet": "Daily",
+                "row_id": None,
+                "actor": "migration",
+                "source": "health-workbook",
+                "reason": "schema v2: Daily.day_status, formula-driven deficit/under-1800, Meals footer formulas",
+                "external_id": None,
+                "before_json": json.dumps({"schema_version": formulas.schema_version(current)}),
+                "after_json": json.dumps({"schema_version": formulas.SCHEMA_VERSION, "daily_added_header": formulas.STATUS}),
+            })
+            return {"result": "migrated", "schema_version": formulas.SCHEMA_VERSION, "backup": backup.name}
+
     def append_sheet(self, sheet_name: str, record: dict) -> dict:
         _reject_readonly(sheet_name)
         values = _sheet_values(sheet_name, record, _append_required(sheet_name))
         with self._locked() as connection:
             current = self._read()
+            _guard_daily(current, sheet_name, values)
             existing = _existing_row(current, sheet_name, values)
             if existing:
                 if _payload_matches(current, sheet_name, existing, values):
@@ -101,16 +124,22 @@ class WriteStore:
         if not isinstance(fields, dict) or not fields:
             raise WorkbookWriteError("missing_field", "fields must include the corrected values")
         headers = set(TABLE_HEADERS[sheet_name])
+        if sheet_name == "Daily":
+            headers.add(formulas.STATUS)
         unknown = set(fields).difference(headers)
         if unknown:
             raise WorkbookWriteError("unknown_field", "Unknown field: " + ", ".join(sorted(unknown)))
         attribution = _sheet_values(sheet_name, {**fields, **record}, ATTRIBUTION)
         changes = {key: attribution[key] for key in fields if key in attribution}
+        # day_status is bookkeeping, not data ownership: a status-only PATCH keeps the row's updated_by
+        # (feeders use updated_by to decide who owns weight_lb). The audit log still records the actor.
+        status_only = set(fields) == {formulas.STATUS}
         for key in ("updated_by", "recorded_at", "source"):
-            if key in headers:
+            if key in headers and not (status_only and key == "updated_by"):
                 changes[key] = attribution[key]
         with self._locked() as connection:
             current = self._read()
+            _guard_daily(current, sheet_name, {key: fields[key] for key in fields})
             probe = {**row_values(current, sheet_name, row_id), **changes}
             existing = _existing_row(current, sheet_name, probe)
             if existing and existing != row_id:
@@ -179,7 +208,10 @@ class WriteStore:
     def _check(self, data: bytes, sheet_name: str) -> None:
         book = inspect_workbook(data)
         sheet = book.sheets.get(sheet_name)
-        if sheet is None or sheet.headers != list(TABLE_HEADERS[sheet_name]):
+        accepted = [list(TABLE_HEADERS[sheet_name])]
+        if sheet_name == "Daily":
+            accepted.append(list(TABLE_HEADERS[sheet_name]) + [formulas.STATUS])
+        if sheet is None or sheet.headers not in accepted:
             code = "measurements_missing" if sheet_name == "Measurements" else "sheet_missing"
             raise WorkbookWriteError(code, f"{sheet_name} sheet is missing or invalid")
 
@@ -267,12 +299,15 @@ def _append_required(sheet_name: str) -> tuple[str, ...]:
 def _sheet_values(sheet_name: str, record: dict, required: tuple[str, ...]) -> dict:
     _require(record, required)
     headers = set(TABLE_HEADERS[sheet_name])
+    if sheet_name == "Daily":
+        headers.add(formulas.STATUS)
     allowed = headers | {"source", "updated_by", "recorded_at", "fields", "reason", "external_id"}
     unknown = set(record).difference(allowed)
     if unknown:
         raise WorkbookWriteError("unknown_field", "Unknown field: " + ", ".join(sorted(unknown)))
     values = {}
-    for key in (*TABLE_HEADERS[sheet_name], *ATTRIBUTION):
+    extra = (formulas.STATUS,) if sheet_name == "Daily" else ()
+    for key in (*TABLE_HEADERS[sheet_name], *extra, *ATTRIBUTION):
         if key not in record or record[key] in (None, ""):
             continue
         value = record[key]
@@ -280,11 +315,31 @@ def _sheet_values(sheet_name: str, record: dict, required: tuple[str, ...]) -> d
             raise WorkbookWriteError("invalid_value", f"{key} must be text or a number")
         values[key] = value.strip() if isinstance(value, str) else value
     _validate_dates(sheet_name, values)
+    if formulas.STATUS in values:
+        status = values[formulas.STATUS]
+        if not isinstance(status, str) or status.strip().casefold() not in formulas.STATUS_VALUES:
+            raise WorkbookWriteError("invalid_day_status", "day_status must be one of: " + ", ".join(formulas.STATUS_VALUES))
+        values[formulas.STATUS] = status.strip().casefold()
     return values
 
 
+def _guard_daily(data: bytes, sheet_name: str, values: dict) -> None:
+    """Daily write rules that depend on the workbook's schema version."""
+    if sheet_name != "Daily":
+        return
+    book = inspect_workbook(data)
+    has_status = formulas.daily_has_status(book)
+    if formulas.STATUS in values and not has_status:
+        raise WorkbookWriteError("schema_outdated", "Daily.day_status needs the schema v2 migration (python -m health_workbook.migrate schema-v2)")
+    if has_status and formulas.schema_version(data) >= formulas.SCHEMA_VERSION:
+        derived = sorted(set(values).intersection(formulas.DERIVED))
+        if derived:
+            raise WorkbookWriteError("formula_field", "Formula-owned column(s) cannot be written: " + ", ".join(derived))
+
+
 def _cell_values(sheet_name: str, values: dict) -> dict:
-    return {key: values[key] for key in TABLE_HEADERS[sheet_name] if key in values}
+    keys = TABLE_HEADERS[sheet_name] + ((formulas.STATUS,) if sheet_name == "Daily" else ())
+    return {key: values[key] for key in keys if key in values}
 
 
 def _existing_row(data: bytes, sheet_name: str, values: dict) -> str | None:

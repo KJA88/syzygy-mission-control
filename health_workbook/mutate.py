@@ -7,22 +7,13 @@ import io
 import re
 import zipfile
 
+from health_workbook import formulas
+from health_workbook.pkg import WorkbookWriteError, package_parts, repack as _repack_parts
+from health_workbook.sheetxml import SheetDoc
 from health_workbook.workbook import TABLE_HEADERS, inspect_workbook, sheet_key
 
 MEASUREMENTS = "Measurements"
 _HEADERS = TABLE_HEADERS[MEASUREMENTS]
-
-
-class WorkbookWriteError(ValueError):
-    def __init__(self, code: str, detail: str):
-        super().__init__(detail)
-        self.code = code
-        self.detail = detail
-
-
-def package_parts(data: bytes) -> dict[str, bytes]:
-    with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        return {info.filename: archive.read(info.filename) for info in archive.infolist()}
 
 
 def protected_digest(data: bytes, measurements_part: str | None = None) -> dict[str, str]:
@@ -81,35 +72,100 @@ def find_measurement(data: bytes, source: str, external_id: str | None) -> str |
     return find_row(data, MEASUREMENTS, {"source": source, "external_id": external_id})
 
 
+def write_headers(book, sheet_name: str, data: bytes | None = None) -> tuple[str, ...]:
+    """Columns this sheet accepts writes for (Daily gains day_status once migrated)."""
+    headers = TABLE_HEADERS[sheet_name]
+    if sheet_name == "Daily" and formulas.STATUS in book.sheets["Daily"].headers:
+        return (*headers, formulas.STATUS)
+    return headers
+
+
+def _daily_formula_owned(book, data: bytes, sheet_name: str) -> bool:
+    return sheet_name == "Daily" and formulas.daily_has_status(book) and formulas.schema_version(data) >= formulas.SCHEMA_VERSION
+
+
+def _cells_for(row_number: int, values: dict, headers: tuple[str, ...], skip: frozenset = frozenset()) -> list[list]:
+    cells = []
+    for column, name in enumerate(headers, start=1):
+        value = values.get(name)
+        if name in skip or value is None or value == "":
+            continue
+        cells.append([column, _cell_xml(column, row_number, value)])
+    return cells
+
+
 def append_row(data: bytes, sheet_name: str, values: dict) -> tuple[bytes, str]:
     part = _require_sheet(data, sheet_name)
-    headers = TABLE_HEADERS[sheet_name]
+    book = inspect_workbook(data)
+    headers = write_headers(book, sheet_name)
+    if sheet_name == "Meals":
+        return _append_meal(data, part, book, values, headers)
+    owned = _daily_formula_owned(book, data, sheet_name)
     sheet = package_parts(data)[part].decode("utf-8")
     row_number = _next_row_number(sheet)
-    updated = _insert(sheet, "</sheetData>", _row_xml(row_number, values, headers))
+    skip = frozenset(formulas.DERIVED) if owned else frozenset()
+    row_xml = f'<row r="{row_number}">' + "".join(xml for _, xml in _cells_for(row_number, values, headers, skip)) + "</row>"
+    updated = _insert(sheet, "</sheetData>", row_xml)
     rebuilt = _repack(data, {part: updated.encode("utf-8")})
-    _assert_protected(data, rebuilt, part, sheet_name)
+    if sheet_name == "Daily":
+        rebuilt = formulas.refresh_caches(rebuilt, ("daily",))
+    _assert_protected(data, rebuilt, _allowed_parts(data, sheet_name, part, owned), sheet_name)
     return rebuilt, f"{sheet_key(sheet_name)}:{row_number}"
+
+
+def _allowed_parts(data: bytes, sheet_name: str, part: str, owned: bool) -> set[str]:
+    allowed = {part}
+    if owned:
+        allowed.add(_sheet_part(data, "Deficit Bank"))
+    return allowed
+
+
+def _append_meal(data: bytes, part: str, book, values: dict, headers: tuple[str, ...]) -> tuple[bytes, str]:
+    """Insert a Meals row directly below the last real data row, shifting any footer down."""
+    sheet = book.sheets["Meals"]
+    insert_at = max([row["row"] for row in sheet.rows], default=sheet.header_row or 1) + 1
+    doc = SheetDoc(package_parts(data)[part].decode("utf-8"))
+    layout = formulas._meals_layout(book)
+    managed = layout is not None and formulas.meals_footer_managed(doc, layout)
+    if doc.has_formulas() and not managed:
+        raise WorkbookWriteError("meals_formulas_unsupported", "Meals contains formulas this service does not manage; refusing to shift rows")
+    if sheet.footer:
+        doc.shift_rows(insert_at, 1)
+    row = doc.ensure_row(insert_at)
+    row.cells = _cells_for(insert_at, values, headers)
+    rebuilt = _repack(data, {part: doc.render().encode("utf-8")})
+    if managed and values.get("date"):
+        book2 = inspect_workbook(rebuilt)
+        doc2 = SheetDoc(package_parts(rebuilt)[part].decode("utf-8"))
+        if formulas.ensure_daily_totals_row(doc2, book2, str(values["date"])):
+            rebuilt = _repack(rebuilt, {part: doc2.render().encode("utf-8")})
+    rebuilt = formulas.refresh_caches(rebuilt, ("meals",))
+    _assert_protected(data, rebuilt, {part}, "Meals")
+    return rebuilt, f"{sheet_key('Meals')}:{insert_at}"
 
 
 def patch_row(data: bytes, sheet_name: str, row_id: str, values: dict) -> tuple[bytes, dict]:
     row_number = _row_number(sheet_name, row_id)
     part = _require_sheet(data, sheet_name)
-    headers = TABLE_HEADERS[sheet_name]
     book = inspect_workbook(data)
+    headers = write_headers(book, sheet_name)
     current = next((row for row in book.sheets[sheet_name].rows if row["row"] == row_number), None)
     if current is None:
         raise WorkbookWriteError("row_missing", f"{sheet_name} row was not found")
     before = {key: current.get(key) for key in headers}
     merged = dict(before)
     merged.update(values)
-    sheet = package_parts(data)[part].decode("utf-8")
-    pattern = re.compile(rf'<row r="{row_number}"[^>]*>.*?</row>', re.DOTALL)
-    updated, count = pattern.subn(_row_xml(row_number, merged, headers), sheet, count=1)
-    if count != 1:
+    owned = _daily_formula_owned(book, data, sheet_name)
+    skip = frozenset(formulas.DERIVED) if owned else frozenset()
+    doc = SheetDoc(package_parts(data)[part].decode("utf-8"))
+    row = doc.row(row_number)
+    if row is None:
         raise WorkbookWriteError("row_missing", f"{sheet_name} row was not found")
-    rebuilt = _repack(data, {part: updated.encode("utf-8")})
-    _assert_protected(data, rebuilt, part, sheet_name)
+    row.cells = _cells_for(row_number, merged, headers, skip)
+    rebuilt = _repack(data, {part: doc.render().encode("utf-8")})
+    if sheet_name in ("Daily", "Meals"):
+        rebuilt = formulas.refresh_caches(rebuilt, ("daily",) if sheet_name == "Daily" else ("meals",))
+    _assert_protected(data, rebuilt, _allowed_parts(data, sheet_name, part, owned), sheet_name)
     return rebuilt, before
 
 
@@ -131,7 +187,7 @@ def row_values(data: bytes, sheet_name: str, row_id: str) -> dict:
     current = next((row for row in book.sheets[sheet_name].rows if row["row"] == row_number), None)
     if current is None:
         raise WorkbookWriteError("row_missing", f"{sheet_name} row was not found")
-    return {key: current.get(key) for key in TABLE_HEADERS[sheet_name]}
+    return {key: current.get(key) for key in write_headers(book, sheet_name)}
 
 
 def _require_measurements(data: bytes) -> str:
@@ -152,25 +208,8 @@ def _measurements_part(data: bytes) -> str:
 
 
 def _sheet_part(data: bytes, sheet_name: str) -> str:
-    with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        workbook = archive.read("xl/workbook.xml")
-        rels = archive.read("xl/_rels/workbook.xml.rels")
-    from xml.etree import ElementTree
-    from health_workbook.workbook import NS, PKG_NS, REL_NS, _part_path
-
-    root = ElementTree.fromstring(workbook)
-    rel_root = ElementTree.fromstring(rels)
-    targets = {
-        rel.attrib.get("Id"): rel.attrib.get("Target", "")
-        for rel in rel_root.findall(PKG_NS + "Relationship")
-    }
-    for sheet in root.findall(NS + "sheets/" + NS + "sheet"):
-        if sheet.attrib.get("name") != sheet_name:
-            continue
-        part = _part_path(targets.get(sheet.attrib.get(REL_NS + "id"), ""))
-        return part
-    code = "measurements_missing" if sheet_name == MEASUREMENTS else "sheet_missing"
-    raise WorkbookWriteError(code, f"{sheet_name} sheet is missing")
+    from health_workbook.pkg import sheet_part
+    return sheet_part(data, sheet_name)
 
 
 def _assert_existing_parts(before: bytes, after: bytes) -> None:
@@ -184,27 +223,19 @@ def _assert_existing_parts(before: bytes, after: bytes) -> None:
             raise WorkbookWriteError("protected_sheet_changed", "A sheet other than Measurements changed")
 
 
-def _assert_protected(before: bytes, after: bytes, sheet_part: str, sheet_name: str) -> None:
-    if protected_digest(before, sheet_part) != protected_digest(after, sheet_part):
-        raise WorkbookWriteError("protected_sheet_changed", f"A sheet other than {sheet_name} changed")
+def _assert_protected(before: bytes, after: bytes, sheet_part, sheet_name: str) -> None:
+    parts = {sheet_part} if isinstance(sheet_part, str) else set(sheet_part)
+    old, new = package_parts(before), package_parts(after)
+    for name in set(old) | set(new):
+        if name in parts:
+            continue
+        if old.get(name) != new.get(name):
+            raise WorkbookWriteError("protected_sheet_changed", f"A sheet other than {sheet_name} changed")
     inspect_workbook(after)
 
 
 def _repack(data: bytes, replacements: dict[str, bytes]) -> bytes:
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(buffer, "w") as output:
-        seen = set()
-        for info in source.infolist():
-            payload = replacements.get(info.filename, source.read(info.filename))
-            if info.filename in replacements:
-                output.writestr(info.filename, payload, compress_type=zipfile.ZIP_DEFLATED)
-            else:
-                output.writestr(info, payload)
-            seen.add(info.filename)
-        for name, payload in replacements.items():
-            if name not in seen:
-                output.writestr(name, payload, compress_type=zipfile.ZIP_DEFLATED)
-    return buffer.getvalue()
+    return _repack_parts(data, replacements)
 
 
 def _insert(text: str, marker: str, insertion: str) -> str:
