@@ -12,7 +12,7 @@
   <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
   <link rel="icon" href="/icons/icon-192.png" sizes="192x192" type="image/png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=20261004-safety" />
 </head>
 <body>
   <div class="scanlines" aria-hidden="true"></div>
@@ -99,6 +99,7 @@
         <section class="card" aria-labelledby="control-heading">
           <div class="card-head"><h2 id="control-heading">RoArm control</h2></div>
           <p class="hint">Named skills run automatically when the lightweight gate accepts them. Gripper open/close is not available: the production command layer has no standalone gripper command.</p>
+          <p id="polar-arm-status" class="hint">Arm available</p>
           <div class="control-grid">
             <label>Authority <input id="ctrl-authority" value="manual" autocomplete="off"></label>
             <label>Operator <input id="ctrl-operator" value="manual" autocomplete="off"></label>
@@ -200,7 +201,25 @@
           <p id="health-status" class="hint">Waiting for workbook</p>
         </div>
         <p class="hint">Read-only daily summaries and measurements from the health workbook service. Workouts stay on Training.</p>
-        <h2>Current</h2>
+        <section class="card" aria-labelledby="polar-heading">
+          <div class="card-head"><h2 id="polar-heading">Polar H10</h2></div>
+          <p id="polar-live" class="hidden" role="status"></p>
+          <p id="polar-elapsed" class="hidden"></p>
+          <p id="polar-status" class="hint">Waiting for capture status</p>
+          <p id="polar-detail" class="hint"></p>
+          <p id="polar-reason" class="hint"></p>
+          <p class="hint">Morning HRV is a 60-second resting measurement written to Measurements. Wearing the strap does not start it, and it leaves Fitbit overnight HRV unchanged.</p>
+          <div class="control-actions">
+            <button type="button" id="polar-morning-start">Start Morning HRV</button>
+            <button type="button" id="polar-morning-stop">Stop Morning HRV</button>
+          </div>
+          <p class="hint">Workout recording continues until Stop workout. It writes one Polar H10 Training session and does not merge that session with Fitbit or treadmill records. A 3-hour safety limit saves that same Training row if Stop is not pressed. Morning HRV stays a separate 60-second capture.</p>
+          <div class="control-actions">
+            <button type="button" id="polar-workout-start">Start workout</button>
+            <button type="button" id="polar-workout-stop">Stop workout</button>
+          </div>
+        </section>
+        <h2>Latest values</h2>
         <div id="health-cards" class="cards-grid"></div>
         <h2>Recent measurements</h2>
         <div id="health-recent" class="cards-grid"></div>
@@ -307,6 +326,6 @@
       </footer>
     </div>
   </div>
-  <script src="app.js"></script>
+  <script src="app.js?v=20261004-safety"></script>
 </body>
 </html>

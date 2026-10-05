@@ -6,7 +6,8 @@ Named skill requests and the engineering JSON path are served on this same
 server. Does not probe Guardian MCP catalogs. Read-only workout summaries may
 call the local Fitbit MCP at 127.0.0.1:8010 and do not receive OAuth tokens.
 The Health view reads the loopback health workbook service with the read token
-and does not write the workbook.
+and does not write the workbook. Polar H10 resting capture starts only from an
+explicit operator request, holds the arm, and restores roarm-ap before release.
 
 The origin stays on the Pi. A phone may reach only this UI through the
 dedicated Cloudflare Access hostname and tunnel. Do not publish port 9070
@@ -283,6 +284,53 @@ def _mission_post(missions, path, payload):
     return missions.start(payload.get("mission"), operator=payload.get("operator"))
 
 
+def _polar_post(polar, path, payload):
+    if polar is None:
+        return {"accepted": False, "reason": "POLAR_CAPTURE_UNAVAILABLE"}
+    if not isinstance(payload, dict):
+        return {"accepted": False, "reason": "MALFORMED_PARAMETERS"}
+    if path == "/api/polar/capture/stop":
+        if set(payload) - {"operator"}:
+            return {"accepted": False, "reason": "MALFORMED_PARAMETERS"}
+        return polar.stop(operator=payload.get("operator"))
+    if set(payload) - {"operator", "seconds", "mode"}:
+        return {"accepted": False, "reason": "MALFORMED_PARAMETERS"}
+    return polar.start(
+        operator=payload.get("operator"),
+        seconds=payload.get("seconds"),
+        mode=payload.get("mode"),
+    )
+
+
+def _polar_from_config(state_dir, owner, root):
+    if owner is None:
+        return None
+    from control.polar_capture import NmcliRadio, PolarCapture, ethernet_up, live_runner
+    from guardian.config import load_config
+    address = "192.168.4.2"
+    host = "192.168.1.18"
+    try:
+        loaded = load_config(root / "config" / "services.yaml")
+        roarm = loaded.get("roarm") if isinstance(loaded.get("roarm"), dict) else {}
+        if roarm.get("route_source"):
+            address = str(roarm["route_source"])
+        for node in loaded.get("nodes") or []:
+            if isinstance(node, dict) and node.get("id") == "pi" and node.get("host"):
+                host = str(node["host"])
+    except (OSError, ValueError, KeyError, TypeError):
+        address = "192.168.4.2"
+        host = "192.168.1.18"
+    return PolarCapture(
+        owner,
+        Path(state_dir) / "polar-capture.json",
+        ethernet=lambda: ethernet_up(host),
+        radio=NmcliRadio(),
+        runner=live_runner(root),
+        expected_address=address,
+        expected_connection="roarm-ap",
+    )
+
+
 def _workouts_from_env():
     try:
         from workouts.fitbit import open_fitbit
@@ -372,7 +420,7 @@ def relay_stream(destination, upstream, chunk_size=8192):
             closer()
 
 
-def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None, missions=None, workouts=None, health=None):
+def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None, missions=None, workouts=None, health=None, polar=None):
     snapshot_path = state_dir / "snapshot.json"
     events_path = state_dir / "events.jsonl"
 
@@ -462,6 +510,8 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 ))
             if parsed.path in ("/api/missions/start", "/api/missions/stop"):
                 return self._json(200, _mission_post(missions, parsed.path, payload))
+            if parsed.path in ("/api/polar/capture/start", "/api/polar/capture/stop"):
+                return self._json(200, _polar_post(polar, parsed.path, payload))
             if parsed.path.startswith("/api/workouts/"):
                 return self._json(405, {"available": False, "reason": "READ_ONLY", "source": "fitbit"})
             if parsed.path == "/api/health/summary":
@@ -541,6 +591,18 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                         "active": None,
                     })
                 return self._json(200, missions.status())
+            if path == "/api/polar/capture":
+                if qs:
+                    return self._json(400, {"accepted": False, "reason": "MALFORMED_PARAMETERS"})
+                if polar is None:
+                    return self._json(200, {
+                        "available": False,
+                        "phase": "idle",
+                        "message": "Polar capture is unavailable.",
+                        "arm_available": True,
+                        "last": None,
+                    })
+                return self._json(200, polar.status())
             if path == "/api/missions/history":
                 try:
                     limit = int(qs.get("limit", ["20"])[0])
@@ -636,6 +698,17 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                         summary = missions.health_summary()
                     except Exception:
                         summary["reason"] = "MISSION_ENGINE_UNAVAILABLE"
+                polar_status = {
+                    "available": False,
+                    "phase": "idle",
+                    "message": "Polar capture is unavailable.",
+                    "arm_available": True,
+                }
+                if polar is not None:
+                    try:
+                        polar_status = polar.status()
+                    except Exception:
+                        polar_status["message"] = "Polar capture status failed."
                 return self._json(200, {
                     "ok": True,
                     "role": "mission-control-ui",
@@ -643,6 +716,7 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                     "state_dir": str(state_dir),
                     "hard_stale_s": hard_stale,
                     "mission_engine": summary,
+                    "polar_capture": polar_status,
                 })
             if path == "/api/snapshot":
                 snap = read_snapshot_file(snapshot_path, utcnow(), hard_stale)
@@ -743,6 +817,11 @@ def main(argv=None):
         )
     owner = build_owner(state_dir)
     root = Path(__file__).resolve().parent.parent
+    polar = _polar_from_config(state_dir, owner, root)
+    try:
+        polar.recover()
+    except Exception as exc:
+        sys.stderr.write("polar capture recovery error: %s\n" % (type(exc).__name__,))
     vision = _vision_from_config(root)
     home = _home_from_config(root)
     missions = build_missions(state_dir, home, args.hard_stale_s)
@@ -763,7 +842,7 @@ def main(argv=None):
     threading.Thread(target=heartbeat_loop, name="control-owner-heartbeat", daemon=True).start()
     handler = make_handler(
         state_dir, ui_dir, args.hard_stale_s, args.events_limit,
-        owner, vision, home, missions, _workouts_from_env(), _health_from_env(),
+        owner, vision, home, missions, _workouts_from_env(), _health_from_env(), polar,
     )
     httpd = ThreadingHTTPServer((args.host, args.port), handler)
     sys.stderr.write(
@@ -780,6 +859,10 @@ def main(argv=None):
         sys.stderr.write("\nshutting down\n")
     finally:
         httpd.server_close()
+        try:
+            polar.shutdown()
+        except Exception as exc:
+            sys.stderr.write("polar capture shutdown error: %s\n" % (type(exc).__name__,))
     return 0
 
 

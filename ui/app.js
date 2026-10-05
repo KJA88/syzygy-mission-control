@@ -1504,9 +1504,15 @@
   }
 
   function healthCard(card) {
-    const meta = card.present === true
-      ? (card.source || "source unavailable") + (card.date ? " · " + card.date : "")
-      : "unavailable";
+    let meta = "unavailable";
+    if (card.present === true) {
+      const parts = [];
+      if (card.date) parts.push(card.date);
+      if (card.coverage === "so_far") parts.push("so far");
+      parts.push(card.source || "source unavailable");
+      if (card.device) parts.push(card.device);
+      meta = parts.join(" · ");
+    }
     return '<article class="card"><h2>' + esc(card.label || "Metric") + "</h2><p>" +
       esc(healthValue(card)) + "</p><p>" + esc(meta) + "</p></article>";
   }
@@ -1530,8 +1536,24 @@
         plainNum(point.systolic) + "/" + plainNum(point.diastolic) + " mmHg · " +
         (point.source || "source unavailable");
     }
+    const device = point.device ? " · " + point.device : "";
     return (point.timestamp || point.date || "—") + " · " + plainNum(point.value) +
-      (point.unit ? " " + point.unit : "") + " · " + (point.source || "source unavailable");
+      (point.unit ? " " + point.unit : "") + " · " + (point.source || "source unavailable") + device;
+  }
+
+  function trendSeries(panelId, panel) {
+    const series = Array.isArray(panel.series) ? panel.series : [];
+    if (!series.length) return "";
+    return series.map(function (item) {
+      const points = healthWindow === 30 ? (item.days_30 || []) : (item.days_7 || []);
+      const title = (item.source || "source unavailable") +
+        (item.device ? " / " + item.device : "") +
+        (item.context ? " · " + item.context : "");
+      const lines = points.length
+        ? points.map(function (point) { return "<p>" + esc(trendLine(panelId, point)) + "</p>"; }).join("")
+        : '<p class="hint">No points in this window.</p>';
+      return "<h3>" + esc(title) + "</h3>" + lines;
+    }).join("");
   }
 
   function renderHealth(payload) {
@@ -1548,9 +1570,12 @@
       setText("overview-health", "UNKNOWN / OFFLINE");
     } else {
       const live = cards.filter(function (card) { return card.present === true; }).length;
-      setText("health-status", "Workbook read-only · " + live + " current");
+      setText("health-status", "Workbook read-only · " + live + " shown");
       const weight = cards.filter(function (card) { return card.id === "weight" && card.present === true; })[0];
-      setText("overview-health", weight ? healthValue(weight) : (live ? live + " current" : "No current metrics"));
+      const weightText = weight
+        ? healthValue(weight) + (weight.date ? " · " + weight.date : "")
+        : (live ? live + " shown" : "No metrics");
+      setText("overview-health", weightText);
     }
     if (cardsNode) {
       cardsNode.innerHTML = cards.length
@@ -1567,11 +1592,171 @@
       trendsNode.innerHTML = ids.map(function (id) {
         const panel = trends[id] || { label: id, days_7: [], days_30: [] };
         const points = healthWindow === 30 ? (panel.days_30 || []) : (panel.days_7 || []);
+        const note = panel.selection === "morning"
+          ? '<p class="hint">Morning weigh-in. Earliest local reading before noon.</p>'
+          : "";
+        const series = trendSeries(id, panel);
         const lines = points.length
           ? points.map(function (point) { return "<p>" + esc(trendLine(id, point)) + "</p>"; }).join("")
-          : '<p class="hint">No points in this window.</p>';
-        return '<article class="card"><h2>' + esc(panel.label || id) + "</h2>" + lines + "</article>";
+          : (series ? "" : '<p class="hint">No points in this window.</p>');
+        return '<article class="card"><h2>' + esc(panel.label || id) + "</h2>" +
+          note + lines + series + "</article>";
       }).join("");
+    }
+  }
+
+  let polarError = "";
+  let polarClock = null;
+  let polarClockStart = "";
+
+  function setShown(id, value, className) {
+    const node = document.getElementById(id);
+    if (!node) return;
+    const text = value == null ? "" : String(value);
+    node.textContent = text;
+    if (className) node.className = className;
+    node.classList.toggle("hidden", text === "");
+  }
+
+  function showElapsed(startedAt) {
+    const node = document.getElementById("polar-elapsed");
+    if (!node) return;
+    if (!startedAt) {
+      node.textContent = "";
+      node.classList.add("hidden");
+      polarClockStart = "";
+      if (polarClock) {
+        clearInterval(polarClock);
+        polarClock = null;
+      }
+      return;
+    }
+    function paint() {
+      const start = Date.parse(startedAt);
+      if (!Number.isFinite(start)) return;
+      const total = Math.max(0, Math.floor((Date.now() - start) / 1000));
+      const minutes = Math.floor(total / 60);
+      const seconds = total % 60;
+      node.textContent = minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+      node.classList.remove("hidden");
+    }
+    if (polarClockStart !== startedAt) {
+      polarClockStart = startedAt;
+      if (polarClock) clearInterval(polarClock);
+      paint();
+      polarClock = setInterval(paint, 1000);
+    } else {
+      paint();
+    }
+  }
+
+  function markPolar(button, disabled, recording) {
+    if (!button) return;
+    button.disabled = disabled;
+    button.classList.toggle("is-recording", !!recording);
+  }
+
+  function renderPolar(status) {
+    const phase = status && status.phase ? status.phase : "unknown";
+    const mode = status && status.mode ? status.mode : "";
+    const message = status && status.message ? status.message : "Capture status unavailable";
+    setText("polar-status", mode && phase !== "idle" ? phase + " · " + mode : phase);
+    setText("polar-detail", message);
+    const held = status && status.arm_available === false;
+    setText("polar-arm-status", held ? message : "Arm available");
+    const idle = status && status.available !== false && phase === "idle";
+    const morningBusy = status && status.available !== false && phase !== "idle" && mode === "morning_hrv";
+    const workoutBusy = status && status.available !== false && phase !== "idle" && mode === "workout";
+    const restore = status && status.available !== false && phase === "failed_restore";
+    const morningStart = document.getElementById("polar-morning-start");
+    const morningStop = document.getElementById("polar-morning-stop");
+    const workoutStart = document.getElementById("polar-workout-start");
+    const workoutStop = document.getElementById("polar-workout-stop");
+    markPolar(morningStart, !idle, false);
+    markPolar(workoutStart, !idle, false);
+    markPolar(morningStop, !(morningBusy || restore), morningBusy);
+    markPolar(workoutStop, !(workoutBusy || restore), workoutBusy && !restore);
+    if (restore) {
+      polarError = "";
+      setShown("polar-live", message, "polar-banner is-error");
+      showElapsed("");
+    } else if (workoutBusy && phase === "capturing") {
+      polarError = "";
+      setShown("polar-live", "Workout recording...", "polar-banner");
+      showElapsed(status && status.started_at);
+    } else if (workoutBusy) {
+      polarError = "";
+      setShown("polar-live", phase === "disabling" ? "Starting workout..." : "Saving workout and restoring Wi-Fi...", "polar-banner");
+      showElapsed(status && status.started_at);
+    } else if (morningBusy && phase === "capturing") {
+      polarError = "";
+      setShown("polar-live", "Morning HRV recording...", "polar-banner");
+      showElapsed(status && status.started_at);
+    } else if (morningBusy) {
+      polarError = "";
+      setShown("polar-live", phase === "disabling" ? "Starting Morning HRV..." : "Saving Morning HRV and restoring Wi-Fi...", "polar-banner");
+      showElapsed(status && status.started_at);
+    } else if (polarError) {
+      setShown("polar-live", polarError, "polar-banner is-error");
+      setShown("polar-reason", polarError);
+      showElapsed("");
+    } else {
+      setShown("polar-live", "");
+      setShown("polar-reason", "");
+      showElapsed("");
+    }
+  }
+
+  function polarOperator() {
+    const node = document.getElementById("ctrl-operator");
+    const value = node && node.value ? String(node.value).trim() : "";
+    return value || "operator";
+  }
+
+  async function refreshPolar() {
+    try {
+      const response = await fetch("/api/polar/capture", { cache: "no-store" });
+      const payload = response.ok ? await response.json() : null;
+      renderPolar(payload);
+    } catch (err) {
+      renderPolar(null);
+    }
+  }
+
+  function polarButtons() {
+    return ["polar-morning-start", "polar-morning-stop", "polar-workout-start", "polar-workout-stop"].map(function (id) {
+      return document.getElementById(id);
+    });
+  }
+
+  async function postPolar(url, body, pending) {
+    polarButtons().forEach(function (button) {
+      if (button) button.disabled = true;
+    });
+    polarError = "";
+    setShown("polar-live", pending || "Sending capture request...", "polar-banner");
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch (err) {
+        payload = {};
+      }
+      if (!response.ok || (payload && payload.accepted === false)) {
+        polarError = (payload && (payload.reason || payload.error)) || ("HTTP " + response.status);
+      }
+    } catch (err) {
+      polarError = err && err.message ? "CAPTURE_REQUEST_FAILED: " + err.message : "CAPTURE_REQUEST_FAILED";
+    }
+    await refreshPolar();
+    if (polarError) {
+      setShown("polar-live", polarError, "polar-banner is-error");
+      setShown("polar-reason", polarError);
     }
   }
 
@@ -1665,6 +1850,7 @@
       refreshHome();
       refreshMissions();
       refreshHealth();
+      refreshPolar();
       els.fetchError.classList.add("hidden");
       els.refreshBadge.textContent = "refresh " + Math.round(REFRESH_MS / 1000) + "s";
       els.refreshBadge.className = "pill GREEN";
@@ -1678,6 +1864,31 @@
       els.refreshBadge.textContent = "refresh failed";
       els.refreshBadge.className = "pill RED";
     }
+  }
+
+  const polarMorningStart = document.getElementById("polar-morning-start");
+  if (polarMorningStart && polarMorningStart.addEventListener) {
+    polarMorningStart.addEventListener("click", function () {
+      postPolar("/api/polar/capture/start", { operator: polarOperator(), mode: "morning_hrv", seconds: 60 }, "Starting Morning HRV...");
+    });
+  }
+  const polarMorningStop = document.getElementById("polar-morning-stop");
+  if (polarMorningStop && polarMorningStop.addEventListener) {
+    polarMorningStop.addEventListener("click", function () {
+      postPolar("/api/polar/capture/stop", { operator: polarOperator() }, "Stopping Morning HRV...");
+    });
+  }
+  const polarWorkoutStart = document.getElementById("polar-workout-start");
+  if (polarWorkoutStart && polarWorkoutStart.addEventListener) {
+    polarWorkoutStart.addEventListener("click", function () {
+      postPolar("/api/polar/capture/start", { operator: polarOperator(), mode: "workout" }, "Starting workout...");
+    });
+  }
+  const polarWorkoutStop = document.getElementById("polar-workout-stop");
+  if (polarWorkoutStop && polarWorkoutStop.addEventListener) {
+    polarWorkoutStop.addEventListener("click", function () {
+      postPolar("/api/polar/capture/stop", { operator: polarOperator() }, "Stopping workout...");
+    });
   }
 
   const missionStop = document.getElementById("mission-stop");

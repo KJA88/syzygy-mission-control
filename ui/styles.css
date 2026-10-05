@@ -271,6 +271,26 @@ td.mono, .mono { font-family: var(--mono); }
   .card-head, .topbar { flex-wrap: wrap; }
 }
 
+#polar-live {
+  font-size: 1.35rem;
+  font-weight: 650;
+  margin: 0.2rem 0 0;
+}
+#polar-live.is-error { color: var(--red); }
+#polar-elapsed {
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+  margin: 0.15rem 0 0.4rem;
+}
+.control-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.control-actions button.is-recording {
+  border-color: var(--red);
+  color: var(--red);
+  font-weight: 650;
+}
 .control-grid, .control-actions, .home-actions, .mission-actions {
   display: flex;
   flex-wrap: wrap;
