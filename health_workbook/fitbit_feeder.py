@@ -8,6 +8,21 @@ import sys
 from datetime import datetime, timezone
 
 from health_workbook.feeders import FITBIT_TOOLS, WorkbookClient, sync_dates, sync_fitbit
+
+
+def exit_code(result: dict) -> int:
+    """Fail when a workbook write failed or every Fitbit tool failed.
+
+    One tool can fail while the other tools still update the workbook. That run
+    stays in the JSON log and does not fail the oneshot.
+    """
+    failed = result.get("failed_tools") or []
+    write_errors = int(result.get("errors") or 0) - len(failed)
+    if write_errors > 0:
+        return 1
+    if failed and len(failed) >= len(FITBIT_TOOLS):
+        return 1
+    return 0
 from workouts.fitbit import (
     DEFAULT_URL,
     FitbitUnavailable,
@@ -81,7 +96,7 @@ def main() -> int:
         print(json.dumps({"feeder": "fitbit", "errors": 1, "failed": "sync_failed"}))
         return 1
     print(json.dumps(result, sort_keys=True))
-    return 1 if result["errors"] else 0
+    return exit_code(result)
 
 
 if __name__ == "__main__":

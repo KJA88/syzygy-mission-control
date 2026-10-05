@@ -9,7 +9,9 @@ import unittest
 from hashlib import sha256
 from pathlib import Path
 
+from health_workbook.fitbit_feeder import exit_code
 from health_workbook.feeders import (
+    FITBIT_TOOLS,
     WorkbookClient,
     fitbit_daily_fields,
     load_macro_entries,
@@ -308,3 +310,10 @@ class FeederServiceTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["nutrition_accounting"], "itemized")
         self.assertEqual(rows[0]["food_name_snapshot"], "apple")
+
+    def test_one_fitbit_tool_failure_does_not_fail_the_oneshot(self):
+        partial = {"errors": 1, "failed_tools": ["get_fitbit_weight_history"]}
+        self.assertEqual(exit_code(partial), 0)
+        self.assertEqual(exit_code({"errors": 0, "failed_tools": []}), 0)
+        self.assertEqual(exit_code({"errors": len(FITBIT_TOOLS), "failed_tools": list(FITBIT_TOOLS)}), 1)
+        self.assertEqual(exit_code({"errors": 2, "failed_tools": ["get_fitbit_weight_history"]}), 1)
