@@ -10,7 +10,9 @@ import argparse
 import asyncio
 import json
 import os
+import signal
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 
 from health_workbook.feeders import WorkbookClient, WorkbookClientError, _day, _equal, _num, zone
@@ -21,14 +23,41 @@ ACTOR = "polar-h10-sync"
 CONTEXT = "morning_resting"
 HR_SERVICE_UUID = "0000180d-0000-1000-8000-00805f9b34fb"
 HR_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
-CONNECT_TIMEOUT_S = 20.0
+CONNECT_TIMEOUT_S = 60.0
 DISCOVER_TIMEOUT_S = 10.0
 FLAG_HR_UINT16 = 0x01
 FLAG_ENERGY_EXPENDED = 0x08
 FLAG_RR_INTERVALS = 0x10
 RR_MIN_MS = 300.0
 RR_MAX_MS = 2000.0
-MAX_SECONDS = 900.0
+MORNING_MAX_SECONDS = 900.0
+WORKOUT_SAFETY_SECONDS = 3 * 60 * 60
+TEST_CONTEXT = "accidental_pre_workout_test"
+TEST_TAG = "TEST/PRE-WORKOUT"
+TEST_NOTE = (
+    "Accidental pre-workout test capture. Not the workout session. "
+    "Exclude this row from workout reporting and session HR burn."
+)
+PARTIAL_CONTEXT = "partial_15min_cap"
+PARTIAL_TAG = "REAL WORKOUT/PARTIAL CAPTURE DUE TO OLD 15-MIN LIMIT"
+PARTIAL_NOTE = (
+    "This row is only the opening capture stopped by the old 15-minute limit. "
+    "It is not the complete workout. Do not replace these Pi values with another source."
+)
+_STOP = threading.Event()
+
+
+def request_stop() -> None:
+    """Ask an in-progress listen to finish and write what it has."""
+    _STOP.set()
+
+
+def _arm_stop() -> None:
+    def _flag(_signum, _frame):
+        request_stop()
+
+    signal.signal(signal.SIGTERM, _flag)
+    signal.signal(signal.SIGINT, _flag)
 
 
 def parse_heart_rate_measurement(data):
@@ -193,11 +222,60 @@ def resting_measurements(samples, started: datetime) -> list[dict]:
     return rows
 
 
-def workout_record(samples, started: datetime, duration_s: float) -> dict | None:
+def seconds_limit(command: str) -> float:
+    return WORKOUT_SAFETY_SECONDS if command == "workout" else MORNING_MAX_SECONDS
+
+
+def _tagged(details: str, tag: str) -> bool:
+    return ("tag=%s" % tag) in (details or "")
+
+
+def mark_test_capture(details: str) -> str:
+    """Keep the row, and mark it so reporting does not treat it as the workout."""
+    text = (details or "").strip()
+    if _tagged(text, TEST_TAG):
+        return text
+    note = "tag=%s. context=%s. %s" % (TEST_TAG, TEST_CONTEXT, TEST_NOTE)
+    return (text + " " + note).strip()
+
+
+def mark_partial_capture(details: str, comparison: str = "") -> str:
+    """Keep the Pi summary, and mark it as an incomplete capture."""
+    text = (details or "").strip()
+    if _tagged(text, PARTIAL_TAG):
+        return text
+    note = "tag=%s. context=%s. %s" % (PARTIAL_TAG, PARTIAL_CONTEXT, PARTIAL_NOTE)
+    if comparison:
+        note = note + " " + comparison.strip()
+    return (text + " " + note).strip()
+
+
+def reportable_polar_workout(row: dict) -> bool:
+    """A complete Polar workout is one session HR burn row, not a test, partial, or Fitbit row."""
+    if not isinstance(row, dict):
+        return False
+    if row.get("source") != SOURCE or row.get("type") != "workout":
+        return False
+    if row.get("burn_role") != "session_hr_burn":
+        return False
+    details = str(row.get("details") or "")
+    if TEST_CONTEXT in details or PARTIAL_CONTEXT in details:
+        return False
+    if _tagged(details, TEST_TAG) or _tagged(details, PARTIAL_TAG):
+        return False
+    return True
+
+
+def workout_record(samples, started: datetime, duration_s: float, ended: datetime | None = None) -> dict | None:
+    """One Training row for every heart-rate sample collected in the session."""
     mean_hr, max_hr = _mean_hr(samples)
     if mean_hr is None:
         return None
     local = started.astimezone(zone())
+    if isinstance(ended, datetime):
+        end_local = ended.astimezone(zone())
+    else:
+        end_local = local + timedelta(seconds=float(duration_s))
     minutes = _num(duration_s / 60.0)
     body = {
         "date": local.date().isoformat(),
@@ -209,7 +287,11 @@ def workout_record(samples, started: datetime, duration_s: float) -> dict | None
         "avg_hr": mean_hr,
         "max_hr": max_hr,
         "burn_role": "session_hr_burn",
-        "details": "samples=%d" % len(samples),
+        "details": "device=%s samples=%d end_local=%s" % (
+            DEVICE,
+            len(samples),
+            end_local.isoformat(timespec="seconds"),
+        ),
         "updated_by": ACTOR,
     }
     return {key: value for key, value in body.items() if value is not None}
@@ -255,7 +337,7 @@ def _empty(mode: str) -> dict:
     }
 
 
-def sync_polar(mode: str, samples, started: datetime | None, duration_s: float, workbook: WorkbookClient, recorded_at: str) -> dict:
+def sync_polar(mode: str, samples, started: datetime | None, duration_s: float, workbook: WorkbookClient, recorded_at: str, ended: datetime | None = None) -> dict:
     result = _empty(mode)
     if samples is None or started is None:
         return result
@@ -273,7 +355,7 @@ def sync_polar(mode: str, samples, started: datetime | None, duration_s: float, 
             _apply_measurement(workbook, reading, recorded_at, result)
         return result
     if mode == "workout":
-        record = workout_record(samples, started, duration_s)
+        record = workout_record(samples, started, duration_s, ended=ended)
         if record is not None:
             _apply_training(workbook, record, recorded_at, result)
         return result
@@ -370,17 +452,19 @@ def open_client(client_cls, device):
 
 
 async def collect_samples(seconds, find_device, client_factory, sleep=None):
-    """Listen until the deadline. One disconnect rediscovers and continues."""
+    """Listen until the deadline or request_stop. One disconnect rediscovers and continues."""
+    _STOP.clear()
     pause = sleep or asyncio.sleep
     samples = []
     skipped = 0
     device = await find_device()
     if device is None:
-        return {"found": False, "samples": None, "skipped": 0, "reconnects": 0, "elapsed_s": 0.0}
+        return {"found": False, "samples": None, "skipped": 0, "reconnects": 0, "elapsed_s": 0.0, "started_at": None, "ended_at": None}
+    wall_started = datetime.now(zone())
     started = asyncio.get_running_loop().time()
     deadline = started + seconds
     reconnects = 0
-    while True:
+    while not _STOP.is_set():
         try:
             skipped += await _listen_once(client_factory, device, samples, deadline, pause)
             break
@@ -398,6 +482,8 @@ async def collect_samples(seconds, find_device, client_factory, sleep=None):
         "skipped": skipped,
         "reconnects": reconnects,
         "elapsed_s": elapsed,
+        "started_at": wall_started,
+        "ended_at": datetime.now(zone()),
     }
 
 
@@ -416,7 +502,7 @@ async def _listen_once(client_factory, device, samples, deadline, pause):
     async with client_factory(device) as client:
         await client.start_notify(HR_MEASUREMENT_UUID, on_measurement)
         try:
-            while asyncio.get_running_loop().time() < deadline:
+            while asyncio.get_running_loop().time() < deadline and not _STOP.is_set():
                 if getattr(client, "is_connected", True) is False:
                     raise ConnectionError("disconnected")
                 remaining = deadline - asyncio.get_running_loop().time()
@@ -464,7 +550,7 @@ def main(argv=None) -> int:
     parser.add_argument("command", choices=("discover", "resting", "workout"))
     parser.add_argument("--seconds", type=float, default=30.0)
     args = parser.parse_args(argv)
-    if args.seconds <= 0 or args.seconds > MAX_SECONDS:
+    if args.seconds <= 0 or args.seconds > seconds_limit(args.command):
         print(json.dumps({"feeder": "polar-h10", "error": "seconds", "errors": 1}))
         return 2
     try:
@@ -492,6 +578,7 @@ def main(argv=None) -> int:
             print(json.dumps({"feeder": "polar-h10", "auth": "missing", "errors": 1}))
             return 1
         started = datetime.now(zone())
+        _arm_stop()
         captured = asyncio.run(collect_samples(args.seconds, find_device, client_factory))
     except BleakError as exc:
         code = "bluetooth_denied" if _permission_denied(exc) else "bluetooth_failed"
@@ -505,7 +592,16 @@ def main(argv=None) -> int:
     recorded_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     workbook = WorkbookClient(os.environ.get("HEALTH_WORKBOOK_URL", "http://127.0.0.1:5052"), token)
     try:
-        result = sync_polar(args.command, captured["samples"], started, captured["elapsed_s"], workbook, recorded_at)
+        listen_started = captured.get("started_at") or started
+        result = sync_polar(
+            args.command,
+            captured["samples"],
+            listen_started,
+            captured["elapsed_s"],
+            workbook,
+            recorded_at,
+            ended=captured.get("ended_at"),
+        )
     except Exception:
         print(json.dumps({"feeder": "polar-h10", "mode": args.command, "error": "write_failed", "errors": 1}))
         return 1

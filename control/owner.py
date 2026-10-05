@@ -59,6 +59,7 @@ class SkillOwner:
         self._lock = Lock()
         self._inflight = False
         self._stop_requested = False
+        self._hold = None
         self.states = []
         self.recover()
 
@@ -81,6 +82,45 @@ class SkillOwner:
 
     def view(self):
         return self.store.view()
+
+    def acquire_hold(self, holder, reason):
+        """Reserve the arm for a non-motion owner. Motion skills cannot start while it is held."""
+        holder = _text(holder)
+        reason = _text(reason) or "CONTROL_HELD"
+        if not holder:
+            return False, "AUTHORITY_REQUIRED"
+        with self._lock:
+            if self._hold is not None:
+                return False, self._hold[1] or "CONTROL_HELD"
+            if self._inflight or self.view().get("state") in ACTIVE:
+                return False, "ARM_ACTIVE"
+            self._hold = (holder, reason)
+            return True, "HELD"
+
+    def release_hold(self, holder):
+        holder = _text(holder)
+        with self._lock:
+            if self._hold is None:
+                return True
+            if self._hold[0] != holder:
+                return False
+            self._hold = None
+            return True
+
+    def set_hold_reason(self, holder, reason):
+        holder = _text(holder)
+        reason = _text(reason) or "CONTROL_HELD"
+        with self._lock:
+            if self._hold is None or self._hold[0] != holder:
+                return False
+            self._hold = (holder, reason)
+            return True
+
+    def hold(self):
+        with self._lock:
+            if self._hold is None:
+                return None
+            return {"holder": self._hold[0], "reason": self._hold[1]}
 
     def catalog(self):
         return {
@@ -162,6 +202,14 @@ class SkillOwner:
             return "UNKNOWN_SKILL"
         if not authority:
             return "AUTHORITY_REQUIRED"
+        if name == "move_to_pose":
+            malformed = self._pose_error(params)
+            if malformed:
+                return malformed
+        elif name == "run_pattern" and params.get("pattern") not in PATTERNS:
+            return "MALFORMED_PARAMETERS"
+        if self._hold is not None:
+            return self._hold[1] or "CONTROL_HELD"
         if self._inflight or self.view().get("state") in ACTIVE:
             return "AUTHORITY_HELD"
         state = self.view().get("state")
@@ -169,12 +217,6 @@ class SkillOwner:
             return "FAULT_NOT_CLEARED"
         if state == "STOPPED":
             return "STOPPED_NOT_CLEARED"
-        if name == "move_to_pose":
-            malformed = self._pose_error(params)
-            if malformed:
-                return malformed
-        elif name == "run_pattern" and params.get("pattern") not in PATTERNS:
-            return "MALFORMED_PARAMETERS"
         ready = self.readiness() if self.readiness else {}
         if not isinstance(ready, dict):
             ready = {}

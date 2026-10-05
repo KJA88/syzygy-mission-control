@@ -8,7 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha256
 
 from health_workbook.feeders import WorkbookClient, zone
@@ -16,13 +16,19 @@ from health_workbook.mutate import add_measurements_sheet
 from health_workbook.polar_h10 import (
     advertisement_matches_h10,
     collect_samples,
+    request_stop,
     describe_h10,
     hrv_from_intervals,
     parse_heart_rate_measurement,
+    mark_partial_capture,
+    mark_test_capture,
+    reportable_polar_workout,
     resting_measurements,
+    seconds_limit,
     select_h10,
     sync_polar,
     workout_record,
+    main,
     HR_MEASUREMENT_UUID,
     HR_SERVICE_UUID,
 )
@@ -151,6 +157,23 @@ class PolarReconnectTests(unittest.TestCase):
         self.assertEqual([sample[0] for sample in captured["samples"]], [60, 62])
         self.assertEqual(opened, ["first", "second"])
 
+    def test_stop_request_ends_the_listen_and_keeps_samples(self):
+        async def find_device():
+            return "strap"
+
+        async def sleep(_seconds):
+            request_stop()
+
+        captured = asyncio.run(collect_samples(
+            30,
+            find_device,
+            lambda device: _NotifyClient(device, [_packet(76, (800,))]),
+            sleep,
+        ))
+        self.assertTrue(captured["found"])
+        self.assertEqual(captured["samples"], [(76, [781.25])])
+        self.assertLess(captured["elapsed_s"], 5)
+
     def test_absent_device_does_not_raise(self):
         async def find_device():
             return None
@@ -253,6 +276,7 @@ class PolarWorkbookTests(unittest.TestCase):
     def test_workout_stays_separate_from_fitbit_and_replays(self):
         record = workout_record(self._samples(), STARTED, 120)
         self.assertEqual(record["source"], "POLAR_H10")
+        self.assertIn("device=POLAR_H10", record["details"])
         self.assertEqual(record["burn_role"], "session_hr_burn")
         self.assertTrue(record["session_id"].startswith("polar-h10:"))
         before = {
@@ -291,6 +315,76 @@ class PolarWorkbookTests(unittest.TestCase):
         self.assertEqual(result["measurements_appended"], 0)
         self.assertEqual(result["errors"], 0)
         self.assertEqual(sha256(self.path.read_bytes()).hexdigest(), digest)
+
+    def test_accidental_test_session_is_kept_out_of_workout_reporting(self):
+        real = workout_record(self._samples(), STARTED, 903.44)
+        accidental = dict(real)
+        accidental["session_id"] = "polar-h10:2026-10-04T12:04:03-07:00"
+        accidental["avg_hr"] = 79.01
+        accidental["max_hr"] = 90
+        accidental["details"] = mark_test_capture(accidental["details"])
+        accidental["burn_role"] = "do_not_sum"
+        fitbit = {
+            "source": "FITBIT",
+            "type": "TREADMILL",
+            "burn_role": "do_not_sum",
+            "details": "Treadmill run",
+            "session_id": "fitbit:treadmill",
+        }
+        partial = dict(real)
+        partial["session_id"] = "polar-h10:2026-10-04T12:21:32-07:00"
+        partial["avg_hr"] = 127.22
+        partial["max_hr"] = 151
+        partial["duration_min"] = 15.06
+        partial["details"] = mark_partial_capture(
+            partial["details"],
+            "Polar Flow reports duration 2:18:44, avg HR 136, max HR 162, 1569 kcal. Mismatch left in place.",
+        )
+        partial["burn_role"] = "partial_session"
+        self.assertIn("tag=TEST/PRE-WORKOUT", accidental["details"])
+        self.assertIn("context=accidental_pre_workout_test", accidental["details"])
+        self.assertIn("Not the workout session", accidental["details"])
+        self.assertIn("tag=REAL WORKOUT/PARTIAL CAPTURE DUE TO OLD 15-MIN LIMIT", partial["details"])
+        self.assertIn("1569 kcal", partial["details"])
+        self.assertEqual(partial["avg_hr"], 127.22)
+        self.assertEqual(partial["max_hr"], 151)
+        self.assertEqual(real["burn_role"], "session_hr_burn")
+        self.assertNotIn("accidental_pre_workout_test", real["details"])
+        self.assertNotIn("partial_15min_cap", real["details"])
+        reportable = [row for row in (accidental, partial, real, fitbit) if reportable_polar_workout(row)]
+        self.assertEqual(reportable, [real])
+        self.assertEqual(seconds_limit("workout"), 3 * 60 * 60)
+        self.assertEqual(seconds_limit("resting"), 900.0)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            morning = main(["resting", "--seconds", "10800"])
+            workout = main(["workout", "--seconds", "10801"])
+        self.assertEqual(morning, 2)
+        self.assertEqual(workout, 2)
+        self.assertEqual(buffer.getvalue().count('"error": "seconds"'), 2)
+
+    def test_stop_summarizes_the_whole_capture_not_the_last_segment(self):
+        early = [(100, [800.0]), (110, [810.0])]
+        late = [(150, [820.0]), (160, [830.0])]
+        ended = STARTED + timedelta(minutes=20)
+        record = workout_record(early + late, STARTED, 20 * 60, ended=ended)
+        self.assertEqual(record["avg_hr"], 130)
+        self.assertEqual(record["max_hr"], 160)
+        self.assertEqual(record["start_local"], STARTED.astimezone(zone()).isoformat(timespec="seconds"))
+        self.assertIn("samples=4", record["details"])
+        self.assertIn("end_local=" + ended.astimezone(zone()).isoformat(timespec="seconds"), record["details"])
+        self.assertEqual(record["duration_min"], 20)
+        self.assertEqual(record["burn_role"], "session_hr_burn")
+        before = len(self.workbook.rows("measurements", date=STARTED.date().isoformat()))
+        result = sync_polar("workout", early + late, STARTED, 20 * 60, self.workbook, RECORDED, ended=ended)
+        self.assertEqual(result["training_appended"], 1)
+        self.assertEqual(result["measurements_appended"], 0)
+        self.assertEqual(result["hr_bpm"], 130)
+        stored = self.workbook.rows("training", session_id=record["session_id"])
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]["avg_hr"], 130)
+        self.assertEqual(stored[0]["max_hr"], 160)
+        self.assertEqual(len(self.workbook.rows("measurements", date=STARTED.date().isoformat())), before)
 
     def test_notify_uuid_is_the_heart_rate_measurement(self):
         seen = {}
