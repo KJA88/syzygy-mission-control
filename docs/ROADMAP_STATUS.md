@@ -30,4 +30,4 @@ Complete. One operator-started physical mission can run at a time. The reference
 
 Secure remote Mission Control and the Android PWA shell are on `main`. The phone reaches only the Mission Control UI through Cloudflare Access and the dedicated tunnel. See [Remote access](REMOTE_ACCESS.md).
 
-Polar RR capture is still an unmerged probe. See [HRV](HRV.md).
+Health workbook, Fitbit, Macro, Withings, Mission Control Health, Polar workbook capture, and the SYZYGY Registry are on `syzygy-health-workbook`. They are not merged to `main`. The current map, including what is live on the Pi and what is only on the laptop, is [Current architecture](ARCHITECTURE_CURRENT.md). Polar capture rules are in [HRV](HRV.md). The old RR probe branch is historical and is not the capture path.

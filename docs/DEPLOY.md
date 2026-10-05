@@ -19,6 +19,16 @@ Current topology and ownership are in [ARCHITECTURE_CURRENT.md](ARCHITECTURE_CUR
 - Home Assistant listens on port 8123 on the Pi. Do not publish it.
 - Home Assistant MCP: `127.0.0.1:8095` only (`syzygy-home-assistant-mcp.service`)
 
+Also live on the Pi as of 2026-10-05, and not part of the Mission Control hostname:
+
+- Health Workbook Service `127.0.0.1:5052` (`syzygy-health-workbook.service`)
+- Withings callback `127.0.0.1:8791` (`python -m health_workbook.withings_callback`), public `https://withings.syzygylab.net/callback`
+- SYZYGY Registry `127.0.0.1:8076` (`syzygy-registry.service`), public `https://registry.syzygylab.net/mcp`
+- Polar Wi-Fi helper socket `/run/syzygy-polar-wifi/control.sock` (`syzygy-polar-wifi.service`)
+- `syzygy-data.service` on `127.0.0.1:8765` from `/home/KA_PI/syzygy-data`, which is not the Health Workbook Service
+
+Do not publish 5052. The portal is `https://mcp.syzygylab.net/mcp`. Details and limits are in [ARCHITECTURE_CURRENT.md](ARCHITECTURE_CURRENT.md).
+
 All runtime service definitions, requiredness, endpoints, intervals, and verified MCP catalogs come from `config/services.yaml`.
 
 ## Install / refresh Jetson
@@ -82,7 +92,7 @@ Routine MCP health traffic is limited to:
 2. `notifications/initialized`
 3. `tools/list`
 
-Guardian does not call application tools for routine health checks. Catalog drift is visible as YELLOW. Auth/invoke remains UNKNOWN until a dedicated probe identity is implemented.
+Guardian does not call application tools for routine health checks. Catalog drift is visible as YELLOW. The dedicated probe is the Cloudflare Access identity in [AUTH_PROBE.md](AUTH_PROBE.md). With no identity file, auth stays UNKNOWN. With the identity configured, the probe still stops at `initialize`, `notifications/initialized`, and `tools/list`.
 
 DHRAS camera state is preserved per camera. `frontyard` is currently optional; `backyard` and `indoor` are required. Production DHRAS startup is systemd-only through `vision-hub.service`; do not use the legacy `robotics/jetson-vision/start.sh` path in production.
 
@@ -176,3 +186,8 @@ sudo apt-get install -y python3-venv
 ```
 
 This refreshes package metadata only; it does not restart or upgrade cloudflared.
+
+## Adding cameras
+
+See [CAMERAS.md](CAMERAS.md) for C210/C500 private Vision Hub setup and acceptance.
+Both new cameras use existing generic health checks and are optional.
