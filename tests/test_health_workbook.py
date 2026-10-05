@@ -352,6 +352,14 @@ class HttpFixture(unittest.TestCase):
         self.assertIn('"path": "/v1/sheets/meals"', text)
         self.assertIn('"status": 200', text)
 
+    def test_audit_route_reads_without_changing_the_workbook(self):
+        status, body = self.request("GET", "/v1/audit?limit=5")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["entries"], [])
+        self.assertEqual(body["limit"], 5)
+        self.assertEqual(body["matched"], 0)
+        self.assertEqual(self.path.read_bytes(), self.before)
+
     def test_reads_do_not_change_the_staged_file(self):
         self.assertEqual(self.path.read_bytes(), self.before)
         names = {path.name for path in Path(self.tmp.name).iterdir()}

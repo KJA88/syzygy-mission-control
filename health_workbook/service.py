@@ -10,6 +10,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import sqlite3
 import sys
 from urllib.parse import parse_qs, urlsplit
 
@@ -188,6 +189,8 @@ class App:
         if path == "/v1/status":
             self._reject_unexpected(query, set())
             return 200, self._status()
+        if path == "/v1/audit":
+            return 200, self._audit(query)
         loaded = self._loaded()
         if path == "/v1/readme":
             self._reject_unexpected(query, set())
@@ -224,6 +227,20 @@ class App:
             "sheets": [name for name in order if name in REQUIRED_SHEETS or name == "Measurements"],
             "unserved_sheets": [name for name in order if name not in REQUIRED_SHEETS and name != "Measurements"],
         }
+
+    def _audit(self, query: str) -> dict:
+        params = self._params(query, {"limit", "sheet"})
+        limit = _audit_limit(params.get("limit"))
+        sheet = params.get("sheet")
+        try:
+            entries = self._store().audit_entries()
+        except sqlite3.Error as error:
+            raise ApiError(503, "audit_unavailable") from error
+        if sheet:
+            wanted = _sheet_key(sheet)
+            entries = [row for row in entries if _sheet_key(row.get("sheet")) == wanted]
+        window = list(reversed(entries[-limit:]))
+        return {"service": SERVICE, "entries": window, "limit": limit, "matched": len(entries)}
 
     def _schema_version(self, loaded: LoadResult):
         if not loaded.valid:
@@ -373,6 +390,21 @@ def _write_target(method: str, path: str) -> tuple[str | None, str | None, bool]
     if normalized in READ_ONLY_WRITES:
         return None, None, True
     return WRITE_SHEETS.get(normalized), row_id, False
+
+
+def _audit_limit(value: str | None) -> int:
+    if value is None or value == "":
+        return 20
+    if not value.isdigit():
+        raise ApiError(400, "invalid_limit", "limit must be 1..100")
+    number = int(value)
+    if number < 1 or number > 100:
+        raise ApiError(400, "invalid_limit", "limit must be 1..100")
+    return number
+
+
+def _sheet_key(value: object) -> str:
+    return str(value or "").casefold().replace("_", " ").replace("-", " ")
 
 
 def _optional_day(value: str | None, label: str) -> str | None:
