@@ -1,0 +1,23 @@
+[Unit]
+Description=SYZYGY capability registry (localhost only)
+Documentation=file:///home/KA_PI/syzygy-mission-control/docs/CAPABILITIES.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=KA_PI
+WorkingDirectory=/home/KA_PI/syzygy-mission-control
+Environment=SYZYGY_REGISTRY_HOST=127.0.0.1
+Environment=SYZYGY_REGISTRY_PORT=8076
+Environment=HEALTH_WORKBOOK_URL=http://127.0.0.1:5052
+EnvironmentFile=-/home/KA_PI/syzygy-runtime/health-workbook.env
+EnvironmentFile=-/home/KA_PI/syzygy-runtime/syzygy-registry.env
+ExecStart=/home/KA_PI/syzygy-mission-control/scripts/run-syzygy-registry.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

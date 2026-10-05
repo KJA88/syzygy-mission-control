@@ -1,0 +1,1 @@
+"""Shared SYZYGY capability registry."""

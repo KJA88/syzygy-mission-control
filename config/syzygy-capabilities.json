@@ -1,0 +1,513 @@
+{
+  "schema_version": 1,
+  "id": "syzygy-capabilities",
+  "docs": "docs/CAPABILITIES.md",
+  "connection": {
+    "protocol": "mcp",
+    "protocol_version": "2024-11-05",
+    "server": "syzygy-registry",
+    "bind": "127.0.0.1",
+    "port": 8076,
+    "path": "/mcp",
+    "pattern": "stdlib JSON-RPC, same shape as the Home Assistant MCP"
+  },
+  "profiles": {
+    "discover": {"permissions": ["read"]},
+    "operate": {"permissions": ["read", "write"]}
+  },
+  "subsystems": [
+    {
+      "id": "syzygy-registry",
+      "name": "SYZYGY capability registry",
+      "owner": "syzygy-registry",
+      "endpoint": "http://127.0.0.1:8076/mcp",
+      "docs": "docs/CAPABILITIES.md",
+      "availability": "declared",
+      "safety": [
+        "Loopback only.",
+        "No shell, filesystem, delete, or workbook-replace tools.",
+        "A new subsystem is a manifest entry. This process does not load or execute new code from the manifest."
+      ]
+    },
+    {
+      "id": "health-workbook",
+      "name": "Health Workbook Service",
+      "owner": "syzygy-health-workbook",
+      "endpoint": "http://127.0.0.1:5052",
+      "docs": "health_workbook/README.md",
+      "availability": "declared",
+      "safety": [
+        "Reads and writes go through the Health Workbook Service.",
+        "The XLSX file is not opened here.",
+        "No delete or workbook replace.",
+        "README, Weight Trend, and Deficit Bank stay read-only.",
+        "Writes require source, updated_by, and recorded_at. Corrections also require reason.",
+        "The service keeps backups, audit rows, and identity idempotency."
+      ]
+    },
+    {
+      "id": "mission-control",
+      "name": "Mission Control",
+      "owner": "syzygy-mission-control.service",
+      "endpoint": "http://127.0.0.1:9070",
+      "public_endpoint": "https://mission.syzygylab.net",
+      "docs": "docs/MISSION_CONTROL.md",
+      "availability": "declared",
+      "safety": [
+        "Mission Control is the cockpit. This registry does not start missions or issue device commands through it."
+      ]
+    },
+    {
+      "id": "roarm",
+      "name": "RoArm",
+      "owner": "Mission Control SkillOwner",
+      "endpoint": "http://127.0.0.1:9070/api/roarm/skills",
+      "docs": "docs/MISSION_CONTROL.md",
+      "availability": "declared",
+      "safety": [
+        "Named skills only: move_to_pose, return_home, run_pattern, stop, clear.",
+        "This registry does not send motion, UDP, or firmware commands.",
+        "Motion requires a new explicit operator approval that names the move and holds Z.",
+        "STOP is an operational stop, not torque-off."
+      ]
+    },
+    {
+      "id": "vision",
+      "name": "Cameras / Vision Hub",
+      "owner": "vision-hub.service",
+      "endpoint": "http://192.168.1.17:8081",
+      "docs": "docs/CAMERAS.md",
+      "availability": "declared",
+      "safety": [
+        "Camera credentials and RTSP URLs stay in Vision Hub.",
+        "This registry lists camera ids only.",
+        "Snapshot and control are not executed here."
+      ],
+      "cameras": [
+        {"id": "frontyard", "required": false},
+        {"id": "backyard", "required": true},
+        {"id": "indoor", "required": true},
+        {"id": "c210", "required": false},
+        {"id": "c500", "required": false}
+      ]
+    },
+    {
+      "id": "fitbit",
+      "name": "Fitbit",
+      "owner": "fitbit-mcp.service",
+      "endpoint": "http://127.0.0.1:8010/mcp",
+      "public_endpoint": "https://fitbit.syzygylab.net/mcp",
+      "docs": "docs/VERIFY_LIVE.md",
+      "availability": "declared",
+      "catalog_verified": "2026-09-23",
+      "expected_tools": 62,
+      "safety": [
+        "Fitbit tools stay on the existing Fitbit MCP.",
+        "This registry does not call that MCP or copy its catalog.",
+        "Workbook rows written by the Fitbit feeder stay source FITBIT."
+      ]
+    },
+    {
+      "id": "polar",
+      "name": "Polar",
+      "owner": "polar-h10-mcp.service",
+      "endpoint": "http://127.0.0.1:8030/mcp",
+      "public_endpoint": "https://polar.syzygylab.net/mcp",
+      "docs": "docs/HRV.md",
+      "availability": "declared",
+      "catalog_verified": "2026-09-23",
+      "expected_tools": 4,
+      "safety": [
+        "Polar tools stay on the existing Polar H10 MCP and the Mission Control capture controls.",
+        "This registry does not start a capture or open Bluetooth."
+      ]
+    },
+    {
+      "id": "pi",
+      "name": "Pi services",
+      "owner": "Raspberry Pi",
+      "endpoint": "http://192.168.1.18:9071/health",
+      "docs": "docs/ARCHITECTURE_CURRENT.md",
+      "availability": "declared",
+      "host": "192.168.1.18",
+      "services": [
+        "syzygy-mission-control",
+        "syzygy-health-workbook",
+        "fitbit-mcp",
+        "polar-h10-mcp",
+        "tv-mcp",
+        "syzygy-home-assistant-mcp",
+        "git-audit-mcp"
+      ],
+      "safety": [
+        "Status is the declared inventory. This registry does not open a shell on the Pi."
+      ]
+    },
+    {
+      "id": "jetson",
+      "name": "Jetson services",
+      "owner": "Jetson",
+      "endpoint": "http://192.168.1.17:9071/health",
+      "docs": "docs/ARCHITECTURE_CURRENT.md",
+      "availability": "declared",
+      "host": "192.168.1.17",
+      "services": [
+        "vision-hub",
+        "vision-dashboard",
+        "dhras-mcp",
+        "git-audit-mcp"
+      ],
+      "safety": [
+        "Status is the declared inventory. This registry does not open a shell on the Jetson."
+      ]
+    },
+    {
+      "id": "tv",
+      "name": "TV",
+      "owner": "tv-mcp.service",
+      "endpoint": "http://127.0.0.1:8065/mcp",
+      "public_endpoint": "https://tv.syzygylab.net/mcp",
+      "docs": "docs/VERIFY_LIVE.md",
+      "availability": "declared",
+      "catalog_verified": "2026-09-23",
+      "expected_tools": 7,
+      "safety": [
+        "TV tools stay on the existing TV MCP. This registry does not send remote commands."
+      ]
+    },
+    {
+      "id": "home-assistant",
+      "name": "Home Assistant",
+      "owner": "syzygy-home-assistant-mcp.service",
+      "endpoint": "http://127.0.0.1:8095/mcp",
+      "docs": "docs/HOME_ASSISTANT.md",
+      "availability": "declared",
+      "safety": [
+        "Home tools stay on the existing Home Assistant MCP.",
+        "There is no generic call_service tool."
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "syzygy.systems",
+      "subsystem": "syzygy-registry",
+      "permission": "read",
+      "execution": "registry",
+      "owner": "syzygy-registry",
+      "endpoint": "http://127.0.0.1:8076/mcp",
+      "docs": "docs/CAPABILITIES.md",
+      "availability": "declared",
+      "safety": ["Lists declared subsystems. It does not probe them."],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "syzygy.tools",
+      "subsystem": "syzygy-registry",
+      "permission": "read",
+      "execution": "registry",
+      "owner": "syzygy-registry",
+      "endpoint": "http://127.0.0.1:8076/mcp",
+      "docs": "docs/CAPABILITIES.md",
+      "availability": "declared",
+      "safety": ["Returns the tools the active profile may see. Restricted tools are listed and not executable."],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "syzygy.capability",
+      "subsystem": "syzygy-registry",
+      "permission": "read",
+      "execution": "registry",
+      "owner": "syzygy-registry",
+      "endpoint": "http://127.0.0.1:8076/mcp",
+      "docs": "docs/CAPABILITIES.md",
+      "availability": "declared",
+      "safety": ["Returns one capability record, including its owner."],
+      "input_schema": {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "syzygy.safety",
+      "subsystem": "syzygy-registry",
+      "permission": "read",
+      "execution": "registry",
+      "owner": "syzygy-registry",
+      "endpoint": "http://127.0.0.1:8076/mcp",
+      "docs": "docs/CAPABILITIES.md",
+      "availability": "declared",
+      "safety": ["Returns the safety rules for one capability or subsystem."],
+      "input_schema": {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "syzygy.state",
+      "subsystem": "syzygy-registry",
+      "permission": "read",
+      "execution": "registry",
+      "owner": "syzygy-registry",
+      "endpoint": "http://127.0.0.1:8076/mcp",
+      "docs": "docs/CAPABILITIES.md",
+      "availability": "declared",
+      "safety": ["Current state is the declared availability. This call does not probe hosts."],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "health.read",
+      "subsystem": "health-workbook",
+      "permission": "read",
+      "execution": "proxy",
+      "owner": "syzygy-health-workbook",
+      "endpoint": "http://127.0.0.1:5052",
+      "docs": "health_workbook/README.md",
+      "availability": "declared",
+      "safety": ["Read token only. The workbook file is not opened."],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sheet": {"type": "string"},
+          "date": {"type": "string"},
+          "from": {"type": "string"},
+          "to": {"type": "string"},
+          "session_id": {"type": "string"},
+          "limit": {"type": "integer"}
+        },
+        "required": ["sheet"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "health.write",
+      "subsystem": "health-workbook",
+      "permission": "write",
+      "execution": "proxy",
+      "owner": "syzygy-health-workbook",
+      "endpoint": "http://127.0.0.1:5052",
+      "docs": "health_workbook/README.md",
+      "availability": "declared",
+      "safety": [
+        "Maintain token only, sent to the workbook service.",
+        "No delete or replace.",
+        "README, Weight Trend, and Deficit Bank are rejected before a request is sent.",
+        "source, updated_by, and recorded_at are required."
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sheet": {"type": "string"},
+          "values": {"type": "object"},
+          "row_id": {"type": "string"},
+          "source": {"type": "string"},
+          "updated_by": {"type": "string"},
+          "recorded_at": {"type": "string"},
+          "reason": {"type": "string"}
+        },
+        "required": ["sheet", "values", "source", "updated_by", "recorded_at"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "health.audit",
+      "subsystem": "health-workbook",
+      "permission": "read",
+      "execution": "proxy",
+      "owner": "syzygy-health-workbook",
+      "endpoint": "http://127.0.0.1:5052/v1/audit",
+      "docs": "health_workbook/README.md",
+      "availability": "declared",
+      "safety": ["Reads the service audit route. It does not open the workbook or the audit database."],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "limit": {"type": "integer"},
+          "sheet": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "mission.status",
+      "subsystem": "mission-control",
+      "permission": "read",
+      "execution": "declared",
+      "owner": "syzygy-mission-control.service",
+      "endpoint": "http://127.0.0.1:9070",
+      "docs": "docs/MISSION_CONTROL.md",
+      "availability": "declared",
+      "safety": ["Declared endpoint only. No mission start."],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "roarm.status",
+      "subsystem": "roarm",
+      "permission": "read",
+      "execution": "declared",
+      "owner": "Mission Control SkillOwner",
+      "endpoint": "http://127.0.0.1:9070/api/roarm/skills",
+      "docs": "docs/MISSION_CONTROL.md",
+      "availability": "declared",
+      "safety": ["Declared status only. No transport commands."],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "roarm.skills",
+      "subsystem": "roarm",
+      "permission": "read",
+      "execution": "declared",
+      "owner": "Mission Control SkillOwner",
+      "endpoint": "http://127.0.0.1:9070/api/roarm/skills",
+      "docs": "docs/MISSION_CONTROL.md",
+      "availability": "declared",
+      "safety": ["Names the skills the control owner already implements."],
+      "declared_result": {
+        "skills": ["move_to_pose", "return_home", "run_pattern", "stop", "clear"]
+      },
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "roarm.motion",
+      "subsystem": "roarm",
+      "permission": "restricted",
+      "execution": "restricted",
+      "reject_reason": "MOTION_RESTRICTED",
+      "owner": "Mission Control SkillOwner",
+      "endpoint": "http://127.0.0.1:9070/api/roarm/skills",
+      "docs": "docs/MISSION_CONTROL.md",
+      "availability": "declared",
+      "safety": [
+        "Motion is not executed by this registry.",
+        "A move needs a new explicit operator approval naming the skill and holding Z."
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {"skill": {"type": "string"}},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "camera.list",
+      "subsystem": "vision",
+      "permission": "read",
+      "execution": "declared",
+      "owner": "vision-hub.service",
+      "endpoint": "http://192.168.1.17:8081",
+      "docs": "docs/CAMERAS.md",
+      "availability": "declared",
+      "safety": ["Ids only. No credentials and no RTSP URLs."],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "camera.snapshot",
+      "subsystem": "vision",
+      "permission": "restricted",
+      "execution": "restricted",
+      "reject_reason": "CAMERA_RESTRICTED",
+      "owner": "vision-hub.service",
+      "endpoint": "http://192.168.1.17:8081",
+      "docs": "docs/CAMERAS.md",
+      "availability": "declared",
+      "safety": ["Snapshots are not fetched here. Vision Hub owns image access."],
+      "input_schema": {
+        "type": "object",
+        "properties": {"camera_id": {"type": "string"}},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "camera.control",
+      "subsystem": "vision",
+      "permission": "restricted",
+      "execution": "restricted",
+      "reject_reason": "CAMERA_RESTRICTED",
+      "owner": "vision-hub.service",
+      "endpoint": "http://192.168.1.17:8081",
+      "docs": "docs/CAMERAS.md",
+      "availability": "declared",
+      "safety": ["PTZ, tracking, and vendor control are not executed here."],
+      "input_schema": {
+        "type": "object",
+        "properties": {"camera_id": {"type": "string"}},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "fitbit.status",
+      "subsystem": "fitbit",
+      "permission": "read",
+      "execution": "declared",
+      "owner": "fitbit-mcp.service",
+      "endpoint": "http://127.0.0.1:8010/mcp",
+      "docs": "docs/VERIFY_LIVE.md",
+      "availability": "declared",
+      "safety": ["Points at the existing Fitbit MCP. It does not call it."],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "polar.status",
+      "subsystem": "polar",
+      "permission": "read",
+      "execution": "declared",
+      "owner": "polar-h10-mcp.service",
+      "endpoint": "http://127.0.0.1:8030/mcp",
+      "docs": "docs/HRV.md",
+      "availability": "declared",
+      "safety": ["Points at the existing Polar MCP. It does not start a capture."],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "pi.status",
+      "subsystem": "pi",
+      "permission": "read",
+      "execution": "declared",
+      "owner": "Raspberry Pi",
+      "endpoint": "http://192.168.1.18:9071/health",
+      "docs": "docs/ARCHITECTURE_CURRENT.md",
+      "availability": "declared",
+      "safety": ["Declared Pi inventory. No shell."],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "jetson.status",
+      "subsystem": "jetson",
+      "permission": "read",
+      "execution": "declared",
+      "owner": "Jetson",
+      "endpoint": "http://192.168.1.17:9071/health",
+      "docs": "docs/ARCHITECTURE_CURRENT.md",
+      "availability": "declared",
+      "safety": ["Declared Jetson inventory. No shell."],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "tv.status",
+      "subsystem": "tv",
+      "permission": "read",
+      "execution": "declared",
+      "owner": "tv-mcp.service",
+      "endpoint": "http://127.0.0.1:8065/mcp",
+      "docs": "docs/VERIFY_LIVE.md",
+      "availability": "declared",
+      "safety": ["Points at the existing TV MCP. It does not send commands."],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "home.status",
+      "subsystem": "home-assistant",
+      "permission": "read",
+      "execution": "declared",
+      "owner": "syzygy-home-assistant-mcp.service",
+      "endpoint": "http://127.0.0.1:8095/mcp",
+      "docs": "docs/HOME_ASSISTANT.md",
+      "availability": "declared",
+      "safety": ["Points at the existing Home Assistant MCP. It does not call devices."],
+      "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+    }
+  ]
+}
