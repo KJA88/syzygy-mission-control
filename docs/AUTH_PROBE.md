@@ -52,10 +52,12 @@ Keep `auth_required: false` during rollout. Once an authenticated route has been
 
 ### TV canary routing and timeout
 
-TV uses `auth_url: https://mcp.syzygylab.net/mcp`,
-`auth_protocol_version: "2025-06-18"`, and `auth_session_required: false`.
-Guardian uses a configured HTTP(S) `auth_url` verbatim; when absent or not
-configured, it falls back to `public_url.rstrip('/') + public_mcp_path`.
+TV uses `auth_url: https://tv.syzygylab.net/mcp`. It does not set
+`auth_protocol_version` or `auth_session_required`, so the canary uses the TV
+probe: protocol `2024-11-05`, `session_required: true`, and header
+`mcp-session-id`. Guardian keeps that session for `notifications/initialized`
+and `tools/list`. Guardian uses a configured HTTP(S) `auth_url` verbatim; when
+absent or not configured, it falls back to `public_url.rstrip('/') + public_mcp_path`.
 This is configuration fallback, not a retry after an authentication failure.
 
 `auth_timeout_s: 10` gives the TV authenticated handshake a separate shared
@@ -76,13 +78,13 @@ All six in-scope MCP services now enable `guardian_identity` with a 10-second
 auth budget and explicit `auth_required: false`. DHRAS, Fitbit, Pi Git Audit,
 Polar H10, and Jetson Git Audit use their configured direct public MCP routes
 via the auth URL fallback. They retain their own protocol and session settings.
-TV retains its verified portal override. Normal health timeouts remain 5 seconds.
+TV's canary uses `https://tv.syzygylab.net/mcp` and the TV session handshake. Normal health timeouts remain 5 seconds.
 
 Direct-route enablement is not a claim of successful authentication: the
 Cloudflare application for each hostname must accept the dedicated Guardian
 identity. A denied route reports `AUTH_DENIED` without blocking system health.
 No Access policy is changed by this rollout, and no credentials are copied into
-configuration. TV portal success does not establish access to the other routes.
+configuration. A successful TV canary does not establish access to the other routes.
 RoArm, the vision service, and the dashboard are not added to auth probing.
 
 Deploy this batch once, restart Guardian once, and inspect all six auth entries
