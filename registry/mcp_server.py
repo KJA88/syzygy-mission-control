@@ -56,8 +56,16 @@ def handle_rpc(catalog: Catalog, message, health: HealthBridge | None = None,
         payload = invoke(catalog, health, name, arguments, authorization, write_log)
         if payload.get("reason") == "UNKNOWN_CAPABILITY" and payload.get("capability") is None:
             return _error(rpc_id, -32601, "UNKNOWN_CAPABILITY")
-        return _result(rpc_id, payload)
+        return _result(rpc_id, _call_tool_result(payload))
     return _error(rpc_id, -32601, "UNKNOWN_CAPABILITY")
+
+
+def _call_tool_result(payload: dict) -> dict:
+    """Keep the dispatch object unchanged and expose it as MCP text content."""
+    return {
+        "content": [{"type": "text", "text": json.dumps(payload)}],
+        "isError": payload.get("accepted") is False,
+    }
 
 
 def _result(rpc_id, result):

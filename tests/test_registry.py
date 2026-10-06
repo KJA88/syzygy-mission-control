@@ -196,6 +196,16 @@ GRANTS = Grants(
 )
 
 
+def unwrap_tool(test, response):
+    result = response["result"]
+    test.assertIn("content", result)
+    test.assertEqual(result["content"][0]["type"], "text")
+    payload = json.loads(result["content"][0]["text"])
+    test.assertEqual(result["content"][0]["text"], json.dumps(payload))
+    test.assertEqual(result["isError"], payload.get("accepted") is False)
+    return payload
+
+
 def tool_call(catalog, name, arguments, headers, health=None, write_log=None, grants=GRANTS):
     return handle_rpc(
         catalog,
@@ -230,10 +240,12 @@ class AuthorizationTests(unittest.TestCase):
             {"Authorization": "Bearer discover-secret"},
             bridge(fake),
         )
-        self.assertEqual(response["result"]["reason"], "PERMISSION_DENIED")
+        denied = unwrap_tool(self, response)
+        self.assertEqual(denied["reason"], "PERMISSION_DENIED")
+        self.assertTrue(response["result"]["isError"])
         self.assertEqual(fake.calls, [])
         anonymous = tool_call(self.catalog, "health.write", WRITE, {}, bridge(fake))
-        self.assertEqual(anonymous["result"]["reason"], "PERMISSION_DENIED")
+        self.assertEqual(unwrap_tool(self, anonymous)["reason"], "PERMISSION_DENIED")
         unknown = tool_call(
             self.catalog,
             "health.write",
@@ -241,7 +253,7 @@ class AuthorizationTests(unittest.TestCase):
             {"Authorization": "Bearer not-a-credential"},
             bridge(fake),
         )
-        self.assertEqual(unknown["result"]["reason"], "PERMISSION_DENIED")
+        self.assertEqual(unwrap_tool(self, unknown)["reason"], "PERMISSION_DENIED")
         self.assertEqual(fake.calls, [])
 
     def test_authenticated_operate_identity_can_write_and_is_logged(self):
@@ -255,7 +267,9 @@ class AuthorizationTests(unittest.TestCase):
             bridge(fake),
             write_log,
         )
-        self.assertTrue(response["result"]["accepted"])
+        written = unwrap_tool(self, response)
+        self.assertTrue(written["accepted"])
+        self.assertFalse(response["result"]["isError"])
         self.assertEqual(fake.calls[-1][2], "maintain-token")
         self.assertEqual(write_log, [{
             "event": "health_write",
@@ -276,10 +290,14 @@ class AuthorizationTests(unittest.TestCase):
         headers = {"Authorization": "Bearer discover-secret"}
         read = tool_call(self.catalog, "health.read", {"sheet": "Weight Trend"}, headers, client)
         audit = tool_call(self.catalog, "health.audit", {"sheet": "Notes"}, headers, client)
-        self.assertTrue(read["result"]["accepted"])
-        self.assertEqual(read["result"]["result"]["sheet"], "Weight Trend")
-        self.assertTrue(audit["result"]["accepted"])
-        self.assertEqual(audit["result"]["result"]["entries"][0]["action"], "append")
+        read_payload = unwrap_tool(self, read)
+        self.assertTrue(read_payload["accepted"])
+        self.assertFalse(read["result"]["isError"])
+        self.assertEqual(read_payload["result"]["sheet"], "Weight Trend")
+        audit_payload = unwrap_tool(self, audit)
+        self.assertTrue(audit_payload["accepted"])
+        self.assertFalse(audit["result"]["isError"])
+        self.assertEqual(audit_payload["result"]["entries"][0]["action"], "append")
         self.assertEqual(fake.calls[0][2], "read-token")
         self.assertEqual(fake.calls[1][2], "read-token")
 
@@ -288,9 +306,10 @@ class AuthorizationTests(unittest.TestCase):
         motion = tool_call(self.catalog, "roarm.motion", {"skill": "move_to_pose"}, headers)
         snapshot = tool_call(self.catalog, "camera.snapshot", {"camera_id": "indoor"}, headers)
         control = tool_call(self.catalog, "camera.control", {"camera_id": "indoor"}, headers)
-        self.assertEqual(motion["result"]["reason"], "MOTION_RESTRICTED")
-        self.assertEqual(snapshot["result"]["reason"], "CAMERA_RESTRICTED")
-        self.assertEqual(control["result"]["reason"], "CAMERA_RESTRICTED")
+        self.assertEqual(unwrap_tool(self, motion)["reason"], "MOTION_RESTRICTED")
+        self.assertTrue(motion["result"]["isError"])
+        self.assertEqual(unwrap_tool(self, snapshot)["reason"], "CAMERA_RESTRICTED")
+        self.assertEqual(unwrap_tool(self, control)["reason"], "CAMERA_RESTRICTED")
 
     def test_unknown_and_unpinned_tools_stay_unavailable(self):
         headers = {"Authorization": "Bearer operate-secret"}
