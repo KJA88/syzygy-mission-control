@@ -31,10 +31,11 @@ ROW_FILTERS = ("date", "from", "to", "session_id", "limit")
 
 
 class HealthError(Exception):
-    def __init__(self, code: str, detail: str | None = None):
+    def __init__(self, code: str, detail: str | None = None, row_id: str | None = None):
         super().__init__(detail or code)
         self.code = code
         self.detail = detail
+        self.row_id = row_id
 
 
 def sheet_key(value: object) -> str:
@@ -94,7 +95,7 @@ class HealthBridge:
             raise HealthError("missing_provenance", "reason is required to correct a row")
         body["reason"] = reason.strip()
         body["fields"] = values
-        return self._call("PATCH", "/v1/" + slug + "/" + parse.quote(row_id, safe=""), "maintain", None, body)
+        return self._call("PATCH", "/v1/" + slug + "/" + parse.quote(row_id, safe=":"), "maintain", None, body)
 
     def audit(self, arguments: dict) -> dict:
         query = {}
@@ -115,7 +116,12 @@ class HealthBridge:
         if status >= 400:
             code = payload.get("error") if isinstance(payload, dict) else "service_error"
             detail = payload.get("detail") if isinstance(payload, dict) else None
-            raise HealthError(str(code or "service_error"), _scrub(detail, self.read_token, self.maintain_token))
+            row_id = payload.get("row_id") if isinstance(payload, dict) else None
+            raise HealthError(
+                str(code or "service_error"),
+                _scrub(detail, self.read_token, self.maintain_token),
+                row_id if isinstance(row_id, str) else None,
+            )
         return payload
 
 

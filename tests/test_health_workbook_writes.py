@@ -133,7 +133,7 @@ class MeasurementWriteTests(unittest.TestCase):
             "fields": {"value": 108},
         })
         self.assertEqual(status, 200)
-        self.assertEqual(body["result"], "corrected")
+        self.assertEqual(body["result"], "updated")
         listed = self.request("GET", "/v1/sheets/measurements")[1]
         self.assertEqual(listed["rows"][0]["value"], 108)
         audit = WriteStore(self.path).audit_entries()
@@ -353,6 +353,64 @@ class MeasurementWriteTests(unittest.TestCase):
             list(TABLE_HEADERS["Measurements"]),
         )
         self.assertEqual(add_measurements_sheet.__name__, "add_measurements_sheet")
+
+    def test_public_row_id_updates_without_duplicating_the_identity(self):
+        body = self._attributed({"date": "2026-04-01", "steps": 100, "hrv_ms": 40, "source": "FITBIT"})
+        status, created = self.request("POST", "/v1/daily", body)
+        self.assertEqual(status, 201, created)
+        row_id = created["row_id"]
+        number = row_id.split(":", 1)[1]
+        listed = self.request("GET", "/v1/rows?sheet=daily&date=2026-04-01&limit=5")[1]
+        self.assertEqual(listed["matched"], 1)
+        self.assertEqual(listed["rows"][0]["row_id"], row_id)
+        patch = {
+            "source": "SYZYGY_TEST",
+            "updated_by": "fixture",
+            "recorded_at": "2026-04-01T01:00:00Z",
+            "reason": "test patch",
+            "fields": {"hrv_ms": 22.3},
+        }
+        for token in (row_id, "Daily:" + number, number, "daily%3A" + number):
+            status, patched = self.request("PATCH", "/v1/daily/" + token, patch)
+            self.assertEqual(status, 200, patched)
+            self.assertEqual(patched["result"], "updated")
+            self.assertEqual(patched["row_id"], row_id)
+        after = self.request("GET", "/v1/rows?sheet=daily&date=2026-04-01&limit=5")[1]
+        self.assertEqual(after["matched"], 1)
+        self.assertEqual(after["rows"][0]["steps"], 100)
+        self.assertEqual(after["rows"][0]["hrv_ms"], 22.3)
+        self.assertEqual(after["rows"][0]["date"], "2026-04-01")
+        changed = dict(body)
+        changed["steps"] = 999
+        status, conflict = self.request("POST", "/v1/daily", changed)
+        self.assertEqual(status, 409, conflict)
+        self.assertEqual(conflict["error"], "conflict")
+        self.assertEqual(conflict["row_id"], row_id)
+        self.assertEqual(self.request("GET", "/v1/rows?sheet=daily&date=2026-04-01&limit=5")[1]["matched"], 1)
+        self.assertEqual(self.request("PATCH", "/v1/daily/not-a-row", patch)[1]["error"], "row_missing")
+        self.assertEqual(self.request("PATCH", "/v1/daily/meals:" + number, patch)[1]["error"], "row_missing")
+        self.assertEqual(self.request("PATCH", "/v1/daily/daily:1", patch)[1]["error"], "row_missing")
+        updates = [
+            row for row in WriteStore(self.path).audit_entries()
+            if row["action"] == "correct" and row["row_id"] == row_id
+        ]
+        self.assertGreaterEqual(len(updates), 1)
+        before = json.loads(updates[0]["before_json"])
+        written = json.loads(updates[0]["after_json"])
+        self.assertEqual(updates[0]["reason"], "test patch")
+        self.assertEqual(before.get("hrv_ms"), 40)
+        self.assertEqual(before["steps"], 100)
+        self.assertEqual(written["hrv_ms"], 22.3)
+        self.assertEqual(written["steps"], 100)
+        cleared = dict(patch)
+        cleared["fields"] = {"hrv_ms": None}
+        cleared["reason"] = "revert test patch"
+        status, reverted = self.request("PATCH", "/v1/daily/" + row_id, cleared)
+        self.assertEqual(status, 200, reverted)
+        restored = self.request("GET", "/v1/rows?sheet=daily&date=2026-04-01&limit=5")[1]["rows"][0]
+        self.assertIsNone(restored["hrv_ms"])
+        self.assertEqual(restored["steps"], 100)
+        self.assertEqual(restored["row_id"], row_id)
 
     def _attributed(self, values):
         body = {

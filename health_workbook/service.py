@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import sqlite3
 import sys
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from health_workbook.mutate import WorkbookWriteError
 from health_workbook.store import WriteFault, WriteStore
@@ -149,6 +149,8 @@ class App:
             else:
                 status = 409 if error.code in {"measurements_missing", "conflict", "sheet_missing"} else 400
             response = {"error": error.code, "detail": error.detail}
+            if error.row_id:
+                response["row_id"] = error.row_id
         except WriteFault:
             status = 500
             response = {"error": "write_failed"}
@@ -386,6 +388,7 @@ def _write_target(method: str, path: str) -> tuple[str | None, str | None, bool]
         key, separator, row_id = name.partition("/")
         if separator == "" or row_id == "" or "/" in row_id:
             return None, None, False
+        row_id = unquote(row_id)
     normalized = key.casefold().replace("_", "-")
     if normalized in READ_ONLY_WRITES:
         return None, None, True

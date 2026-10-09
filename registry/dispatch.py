@@ -126,12 +126,15 @@ def _proxy(health: HealthBridge | None, name: str, arguments: dict) -> dict:
     try:
         payload = getattr(health, PROXY[name])(arguments)
     except HealthError as exc:
-        return {
+        body = {
             "accepted": False,
             "reason": exc.code,
             "capability": name,
             "detail": exc.detail,
         }
+        if exc.row_id:
+            body["row_id"] = exc.row_id
+        return body
     return {"accepted": True, "reason": None, "capability": name, "result": payload}
 
 

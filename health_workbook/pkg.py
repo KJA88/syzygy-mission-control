@@ -9,10 +9,11 @@ from xml.etree import ElementTree
 
 
 class WorkbookWriteError(ValueError):
-    def __init__(self, code: str, detail: str):
+    def __init__(self, code: str, detail: str, row_id: str | None = None):
         super().__init__(detail)
         self.code = code
         self.detail = detail
+        self.row_id = row_id
 
 
 def package_parts(data: bytes) -> dict[str, bytes]:

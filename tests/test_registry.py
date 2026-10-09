@@ -176,6 +176,44 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(CatalogError):
             Catalog(document)
 
+    def test_public_row_id_is_patched_and_conflicts_name_that_id(self):
+        fake = FakeHealth()
+        patched = call(self.catalog, bridge(fake), "health.write", {
+            "sheet": "daily",
+            "row_id": "daily:21",
+            "values": {"hrv_ms": 22.3},
+            "reason": "test patch",
+            "source": "registry",
+            "updated_by": "tester",
+            "recorded_at": "2026-10-06T00:00:00Z",
+        }, profile="operate")
+        self.assertTrue(patched["accepted"])
+        method, url, _token, body = fake.calls[-1]
+        self.assertEqual(method, "PATCH")
+        self.assertTrue(url.endswith("/v1/daily/daily:21"))
+        self.assertNotIn("%3A", url)
+        self.assertEqual(body["fields"], {"hrv_ms": 22.3})
+        self.assertEqual(body["reason"], "test patch")
+
+        def conflict_transport(method, url, token, body):
+            return 409, {
+                "error": "conflict",
+                "detail": "Daily already has a different row for this identity. Patch row_id daily:21.",
+                "row_id": "daily:21",
+            }
+
+        health = HealthBridge("http://127.0.0.1:5052", "read-token", "maintain-token", conflict_transport)
+        conflict = call(self.catalog, health, "health.write", {
+            "sheet": "daily",
+            "values": {"date": "2026-10-06", "hrv_ms": 22.3},
+            "source": "registry",
+            "updated_by": "tester",
+            "recorded_at": "2026-10-06T00:00:00Z",
+        }, profile="operate")
+        self.assertFalse(conflict["accepted"])
+        self.assertEqual(conflict["reason"], "conflict")
+        self.assertEqual(conflict["row_id"], "daily:21")
+
 
 WRITE = {
     "sheet": "notes",

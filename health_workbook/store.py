@@ -17,6 +17,7 @@ from health_workbook.mutate import (
     _same,
     add_measurements_sheet,
     append_row,
+    canonical_row_id,
     find_row,
     patch_row,
     row_values,
@@ -111,7 +112,11 @@ class WriteStore:
             if existing:
                 if _payload_matches(current, sheet_name, existing, values):
                     return {"result": "exists", "row_id": existing, "sheet": sheet_name, "backup": None}
-                raise WorkbookWriteError("conflict", f"{sheet_name} already has a different row for this identity")
+                raise WorkbookWriteError(
+                    "conflict",
+                    f"{sheet_name} already has a different row for this identity. Patch row_id {existing}.",
+                    existing,
+                )
             new_bytes, row_id = append_row(current, sheet_name, _cell_values(sheet_name, values))
             self._check(new_bytes, sheet_name)
             backup = self._commit(connection, current, new_bytes, _audit("append", sheet_name, row_id, values, None, values))
@@ -131,26 +136,30 @@ class WriteStore:
             raise WorkbookWriteError("unknown_field", "Unknown field: " + ", ".join(sorted(unknown)))
         attribution = _sheet_values(sheet_name, {**fields, **record}, ATTRIBUTION)
         changes = {key: attribution[key] for key in fields if key in attribution}
+        for key, value in fields.items():
+            if value in (None, ""):
+                changes[key] = None
         # day_status is bookkeeping, not data ownership: a status-only PATCH keeps the row's updated_by
         # (feeders use updated_by to decide who owns weight_lb). The audit log still records the actor.
         status_only = set(fields) == {formulas.STATUS}
         for key in ("updated_by", "recorded_at", "source"):
             if key in headers and not (status_only and key == "updated_by"):
                 changes[key] = attribution[key]
+        row_id = canonical_row_id(sheet_name, row_id)
         with self._locked() as connection:
             current = self._read()
             _guard_daily(current, sheet_name, {key: fields[key] for key in fields})
             probe = {**row_values(current, sheet_name, row_id), **changes}
             existing = _existing_row(current, sheet_name, probe)
             if existing and existing != row_id:
-                raise WorkbookWriteError("conflict", f"{sheet_name} identity belongs to another row")
+                raise WorkbookWriteError("conflict", f"{sheet_name} identity belongs to another row.", existing)
             new_bytes, before = patch_row(current, sheet_name, row_id, changes)
             self._check(new_bytes, sheet_name)
             after = {**before, **changes}
             backup = self._commit(connection, current, new_bytes, _audit(
                 "correct", sheet_name, row_id, attribution, before, after, record["reason"].strip(),
             ))
-            return {"result": "corrected", "row_id": row_id, "sheet": sheet_name, "backup": backup.name}
+            return {"result": "updated", "row_id": row_id, "sheet": sheet_name, "backup": backup.name}
 
     def audit_entries(self) -> list[dict]:
         if not self.db_path.exists():

@@ -5,6 +5,7 @@ from __future__ import annotations
 from hashlib import sha256
 import io
 import re
+from urllib.parse import unquote
 import zipfile
 
 from health_workbook import formulas
@@ -297,11 +298,26 @@ def _next_row_number(sheet_xml: str) -> int:
     return max(numbers, default=1) + 1
 
 
+def canonical_row_id(sheet_name: str, row_id: str) -> str:
+    return f"{sheet_key(sheet_name)}:{_row_number(sheet_name, row_id)}"
+
+
 def _row_number(sheet_name: str, row_id: str) -> int:
-    match = re.fullmatch(re.escape(sheet_key(sheet_name)) + r":(\d+)", row_id or "")
-    if match is None or int(match.group(1)) <= 1:
+    """Public row ids are ``{sheet}:{excel row}``. Also accept that id percent-encoded, a different prefix case, or the bare Excel row number."""
+    token = unquote(str(row_id or "")).strip()
+    key = sheet_key(sheet_name)
+    prefixed = re.fullmatch(r"([a-z0-9-]+):(\d+)", token, flags=re.IGNORECASE)
+    if prefixed:
+        if prefixed.group(1).casefold() != key:
+            raise WorkbookWriteError("row_missing", f"{sheet_name} row was not found")
+        number = int(prefixed.group(2))
+    elif re.fullmatch(r"\d+", token):
+        number = int(token)
+    else:
         raise WorkbookWriteError("row_missing", f"{sheet_name} row was not found")
-    return int(match.group(1))
+    if number <= 1:
+        raise WorkbookWriteError("row_missing", f"{sheet_name} row was not found")
+    return number
 
 
 def _same(left: object, right: object) -> bool:
