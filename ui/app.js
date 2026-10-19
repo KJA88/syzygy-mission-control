@@ -1263,7 +1263,7 @@
     }
   }
 
-  const TV_INPUT_LABELS = { livetv: "Live TV", cable: "HDMI 1", dashboard: "HDMI 2", soundbar: "HDMI 3" };
+  const TV_INPUT_LABELS = { livetv: "Live TV", cable: "HDMI 3", dashboard: "HDMI 2" };
   let tvPending = null;
 
   function tvLabel(name) {
@@ -1309,8 +1309,7 @@
       return result && result.note === "already_off_or_standby" ? "TV already off or in standby" : "TV off sent";
     }
     if (body.action === "resync") return "Pi now remembers " + tvLabel(body.input) + " (no keys sent)";
-    const presses = result && result.key_hdmi_presses != null ? " · " + result.key_hdmi_presses + " HDMI presses" : "";
-    return "Switched to " + tvLabel(body.input) + presses;
+    return "Input command sent: " + tvLabel(body.input);
   }
 
   async function postTv(body, pendingText) {
