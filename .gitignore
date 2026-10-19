@@ -2,3 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 state/
+
+# K JA personal health data: stays on the Pi, never committed
+scripts/day_status_backfill.json
+scripts/meals_supersede.json
+scripts/e2e_copy_test.py
+scripts/*.jsonl
+meals_append.jsonl
+*.xlsx
