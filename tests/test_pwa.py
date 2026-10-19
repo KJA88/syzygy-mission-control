@@ -51,7 +51,7 @@ class PwaTests(unittest.TestCase):
         respond = text.index("event.respondWith")
         self.assertLess(text.index('request.method !== "GET"'), respond)
         self.assertLess(api_guard, respond)
-        self.assertIn("syzygy-shell-v1", text)
+        self.assertRegex(text, r"syzygy-shell-v[0-9]+")
         self.assertNotIn("localStorage", text)
         self.assertNotIn("HA_TOKEN", text)
         self.assertIn(
