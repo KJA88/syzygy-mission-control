@@ -12,7 +12,7 @@
   <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
   <link rel="icon" href="/icons/icon-192.png" sizes="192x192" type="image/png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=20261004-safety" />
+  <link rel="stylesheet" href="styles.css?v=20261018-tv" />
 </head>
 <body>
   <div class="scanlines" aria-hidden="true"></div>
@@ -150,6 +150,32 @@
           <p id="home-status" class="hint">Waiting for Home Assistant</p>
         </div>
         <p><a id="home-assistant-link" href="#" target="_blank" rel="noopener">Open Home Assistant</a></p>
+        <h2>TV</h2>
+        <article class="card" id="tv-card">
+          <p id="tv-status" class="home-state">TV status unknown</p>
+          <div class="home-actions" id="tv-power">
+            <button type="button" data-tv-action="on">On</button>
+            <button type="button" data-tv-action="off">Off</button>
+          </div>
+          <div class="home-actions" id="tv-inputs">
+            <button type="button" data-tv-input="livetv">Live TV</button>
+            <button type="button" data-tv-input="cable">Cable</button>
+            <button type="button" data-tv-input="dashboard">Dashboard</button>
+            <button type="button" data-tv-input="soundbar">Soundbar</button>
+          </div>
+          <div class="home-actions" id="tv-resync">
+            <label>TV is really on
+              <select id="tv-resync-input">
+                <option value="livetv">Live TV</option>
+                <option value="cable">Cable</option>
+                <option value="dashboard">Dashboard</option>
+                <option value="soundbar">Soundbar</option>
+              </select>
+            </label>
+            <button type="button" id="tv-resync-send">Resync (no keys sent)</button>
+          </div>
+          <p id="tv-result" class="hint">No TV request yet</p>
+        </article>
         <h2>Switches and lights</h2>
         <div id="home-controls" class="cards-grid"></div>
         <h2>Useful sensors</h2>
@@ -326,6 +352,6 @@
       </footer>
     </div>
   </div>
-  <script src="app.js?v=20261004-safety"></script>
+  <script src="app.js?v=20261018-tv"></script>
 </body>
 </html>
