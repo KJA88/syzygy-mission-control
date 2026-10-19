@@ -1263,7 +1263,7 @@
     }
   }
 
-  const TV_INPUT_LABELS = { livetv: "Live TV", cable: "Cable", dashboard: "Dashboard", soundbar: "Soundbar" };
+  const TV_INPUT_LABELS = { livetv: "Live TV", cable: "HDMI 1", dashboard: "HDMI 2", soundbar: "HDMI 3" };
   let tvPending = null;
 
   function tvLabel(name) {

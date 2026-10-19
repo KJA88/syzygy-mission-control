@@ -215,7 +215,7 @@ class TvUiTests(unittest.TestCase):
 
     def test_service_worker_cache_bumped(self):
         text = (ROOT / "ui" / "sw.js").read_text(encoding="utf-8")
-        self.assertIn('const CACHE = "syzygy-shell-v4";', text)
+        self.assertIn('const CACHE = "syzygy-shell-v5";', text)
 
 
 if __name__ == "__main__":
