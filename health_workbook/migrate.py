@@ -2,6 +2,7 @@
 
   python -m health_workbook.migrate              # add the Measurements sheet (original behavior)
   python -m health_workbook.migrate schema-v2    # Daily.day_status + formula-driven deficit logic
+  python -m health_workbook.migrate fiber        # append fiber_g on Meals and Daily
 """
 
 from __future__ import annotations
@@ -22,10 +23,12 @@ def main(argv: list[str] | None = None) -> None:
     store = WriteStore(path)
     if args and args[0] == "schema-v2":
         result = store.migrate_schema_v2()
+    elif args and args[0] == "fiber":
+        result = store.migrate_fiber()
     elif not args:
         result = store.migrate_measurements()
     else:
-        raise SystemExit("usage: python -m health_workbook.migrate [schema-v2]")
+        raise SystemExit("usage: python -m health_workbook.migrate [schema-v2|fiber]")
     print(result["result"])
     if result.get("backup"):
         print(result["backup"])

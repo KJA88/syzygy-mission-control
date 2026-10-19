@@ -15,6 +15,7 @@ from health_workbook.sheetxml import SheetDoc, cell_style, formula_cell, inline_
 from health_workbook.workbook import TABLE_HEADERS, inspect_workbook
 
 STATUS = "day_status"
+FIBER = "fiber_g"
 STATUS_VALUES = ("complete", "open")
 DERIVED = (
     "fitbit_deficit", "est_maint", "est_deficit", "under_1800",
@@ -38,6 +39,16 @@ def schema_version(data: bytes) -> int:
 
 def daily_has_status(book) -> bool:
     return STATUS in book.sheets["Daily"].headers
+
+
+def header_layouts(sheet_name: str) -> list[list[str]]:
+    """Accepted header rows. fiber_g is appended last so existing columns do not move."""
+    base = list(TABLE_HEADERS[sheet_name])
+    if sheet_name == "Meals":
+        return [base, base + [FIBER]]
+    if sheet_name == "Daily":
+        return [base, base + [STATUS], base + [STATUS, FIBER]]
+    return [base]
 
 
 def is_v2(data: bytes) -> bool:
@@ -378,3 +389,44 @@ def migrate_v2(data: bytes) -> bytes:
     if after.sheets["Daily"].headers != base + [STATUS]:
         raise WorkbookWriteError("daily_headers", "Daily day_status header was not written")
     return rebuilt
+
+
+def migrate_fiber(data: bytes) -> bytes:
+    """Append fiber_g to Meals and, after day_status, to Daily. Idempotent."""
+    book = inspect_workbook(data)
+    daily = book.sheets["Daily"]
+    meals = book.sheets["Meals"]
+    daily_target = list(TABLE_HEADERS["Daily"]) + [STATUS, FIBER]
+    meals_target = list(TABLE_HEADERS["Meals"]) + [FIBER]
+    if daily.headers == daily_target and meals.headers == meals_target:
+        return data
+    if daily.headers != list(TABLE_HEADERS["Daily"]) + [STATUS]:
+        raise WorkbookWriteError("schema_outdated", "Daily.fiber_g is added after schema v2 day_status")
+    if meals.headers != list(TABLE_HEADERS["Meals"]):
+        raise WorkbookWriteError("sheet_missing", "Meals header does not match")
+    parts = package_parts(data)
+    replacements: dict[str, bytes] = {}
+    _append_header(data, parts, replacements, "Daily", daily, FIBER)
+    _append_header(data, parts, replacements, "Meals", meals, FIBER)
+    rebuilt = repack(data, replacements)
+    allowed = {sheet_part(data, "Daily"), sheet_part(data, "Meals")}
+    old, new = package_parts(data), package_parts(rebuilt)
+    for name, payload in old.items():
+        if name not in allowed and new.get(name) != payload:
+            raise WorkbookWriteError("protected_sheet_changed", f"Migration changed unexpected part {name}")
+    after = inspect_workbook(rebuilt)
+    if after.sheets["Daily"].headers != daily_target or after.sheets["Meals"].headers != meals_target:
+        raise WorkbookWriteError("sheet_missing", "fiber_g header was not written")
+    return rebuilt
+
+
+def _append_header(data: bytes, parts: dict, replacements: dict, sheet_name: str, sheet, name: str) -> None:
+    part = sheet_part(data, sheet_name)
+    doc = SheetDoc(parts[part].decode("utf-8"))
+    header = doc.row(sheet.header_row)
+    if header is None:
+        raise WorkbookWriteError("sheet_missing", f"{sheet_name} header row not found")
+    column = len(sheet.headers) + 1
+    previous = header.get(column - 1)
+    header.set(column, inline_text_cell(f"{col_letter(column)}{sheet.header_row}", name, cell_style(previous)))
+    replacements[part] = doc.render().encode("utf-8")

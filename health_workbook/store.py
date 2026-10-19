@@ -102,12 +102,35 @@ class WriteStore:
             })
             return {"result": "migrated", "schema_version": formulas.SCHEMA_VERSION, "backup": backup.name}
 
+    def migrate_fiber(self) -> dict:
+        """Append fiber_g on Meals and a Daily fiber_g total. Idempotent."""
+        with self._locked() as connection:
+            current = self._read()
+            new_bytes = formulas.migrate_fiber(current)
+            if new_bytes is current:
+                return {"result": "present", "backup": None}
+            self._check(new_bytes, "Daily")
+            self._check(new_bytes, "Meals")
+            backup = self._commit(connection, current, new_bytes, {
+                "action": "migrate",
+                "sheet": "Daily",
+                "row_id": None,
+                "actor": "migration",
+                "source": "health-workbook",
+                "reason": "add fiber_g on Meals and Daily",
+                "external_id": None,
+                "before_json": None,
+                "after_json": json.dumps({"added": formulas.FIBER, "sheets": ["Meals", "Daily"]}),
+            })
+            return {"result": "migrated", "backup": backup.name}
+
     def append_sheet(self, sheet_name: str, record: dict) -> dict:
         _reject_readonly(sheet_name)
         values = _sheet_values(sheet_name, record, _append_required(sheet_name))
         with self._locked() as connection:
             current = self._read()
             _guard_daily(current, sheet_name, values)
+            _guard_fiber(current, sheet_name, values)
             existing = _existing_row(current, sheet_name, values)
             if existing:
                 if _payload_matches(current, sheet_name, existing, values):
@@ -128,9 +151,7 @@ class WriteStore:
         fields = record.get("fields")
         if not isinstance(fields, dict) or not fields:
             raise WorkbookWriteError("missing_field", "fields must include the corrected values")
-        headers = set(TABLE_HEADERS[sheet_name])
-        if sheet_name == "Daily":
-            headers.add(formulas.STATUS)
+        headers = _known_fields(sheet_name)
         unknown = set(fields).difference(headers)
         if unknown:
             raise WorkbookWriteError("unknown_field", "Unknown field: " + ", ".join(sorted(unknown)))
@@ -149,6 +170,7 @@ class WriteStore:
         with self._locked() as connection:
             current = self._read()
             _guard_daily(current, sheet_name, {key: fields[key] for key in fields})
+            _guard_fiber(current, sheet_name, fields)
             probe = {**row_values(current, sheet_name, row_id), **changes}
             existing = _existing_row(current, sheet_name, probe)
             if existing and existing != row_id:
@@ -217,10 +239,7 @@ class WriteStore:
     def _check(self, data: bytes, sheet_name: str) -> None:
         book = inspect_workbook(data)
         sheet = book.sheets.get(sheet_name)
-        accepted = [list(TABLE_HEADERS[sheet_name])]
-        if sheet_name == "Daily":
-            accepted.append(list(TABLE_HEADERS[sheet_name]) + [formulas.STATUS])
-        if sheet is None or sheet.headers not in accepted:
+        if sheet is None or sheet.headers not in formulas.header_layouts(sheet_name):
             code = "measurements_missing" if sheet_name == "Measurements" else "sheet_missing"
             raise WorkbookWriteError(code, f"{sheet_name} sheet is missing or invalid")
 
@@ -305,17 +324,27 @@ def _append_required(sheet_name: str) -> tuple[str, ...]:
     return tuple(required)
 
 
-def _sheet_values(sheet_name: str, record: dict, required: tuple[str, ...]) -> dict:
-    _require(record, required)
+def _known_fields(sheet_name: str) -> set[str]:
     headers = set(TABLE_HEADERS[sheet_name])
     if sheet_name == "Daily":
         headers.add(formulas.STATUS)
-    allowed = headers | {"source", "updated_by", "recorded_at", "fields", "reason", "external_id"}
+    if sheet_name in ("Daily", "Meals"):
+        headers.add(formulas.FIBER)
+    return headers
+
+
+def _sheet_values(sheet_name: str, record: dict, required: tuple[str, ...]) -> dict:
+    _require(record, required)
+    allowed = _known_fields(sheet_name) | {"source", "updated_by", "recorded_at", "fields", "reason", "external_id"}
     unknown = set(record).difference(allowed)
     if unknown:
         raise WorkbookWriteError("unknown_field", "Unknown field: " + ", ".join(sorted(unknown)))
     values = {}
-    extra = (formulas.STATUS,) if sheet_name == "Daily" else ()
+    extra = []
+    if sheet_name == "Daily":
+        extra.append(formulas.STATUS)
+    if sheet_name in ("Daily", "Meals"):
+        extra.append(formulas.FIBER)
     for key in (*TABLE_HEADERS[sheet_name], *extra, *ATTRIBUTION):
         if key not in record or record[key] in (None, ""):
             continue
@@ -347,8 +376,20 @@ def _guard_daily(data: bytes, sheet_name: str, values: dict) -> None:
 
 
 def _cell_values(sheet_name: str, values: dict) -> dict:
-    keys = TABLE_HEADERS[sheet_name] + ((formulas.STATUS,) if sheet_name == "Daily" else ())
+    keys = list(TABLE_HEADERS[sheet_name])
+    if sheet_name == "Daily":
+        keys.append(formulas.STATUS)
+    if sheet_name in ("Daily", "Meals"):
+        keys.append(formulas.FIBER)
     return {key: values[key] for key in keys if key in values}
+
+
+def _guard_fiber(data: bytes, sheet_name: str, values: dict) -> None:
+    if formulas.FIBER not in values or sheet_name not in ("Daily", "Meals"):
+        return
+    book = inspect_workbook(data)
+    if formulas.FIBER not in book.sheets[sheet_name].headers:
+        raise WorkbookWriteError("schema_outdated", "fiber_g needs the fiber column migration (python -m health_workbook.migrate fiber)")
 
 
 def _existing_row(data: bytes, sheet_name: str, values: dict) -> str | None:

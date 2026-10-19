@@ -74,11 +74,11 @@ def find_measurement(data: bytes, source: str, external_id: str | None) -> str |
 
 
 def write_headers(book, sheet_name: str, data: bytes | None = None) -> tuple[str, ...]:
-    """Columns this sheet accepts writes for (Daily gains day_status once migrated)."""
-    headers = TABLE_HEADERS[sheet_name]
-    if sheet_name == "Daily" and formulas.STATUS in book.sheets["Daily"].headers:
-        return (*headers, formulas.STATUS)
-    return headers
+    """Columns this sheet accepts writes for. day_status and fiber_g stay trailing columns."""
+    actual = list(book.sheets[sheet_name].headers)
+    if actual in formulas.header_layouts(sheet_name):
+        return tuple(actual)
+    return TABLE_HEADERS[sheet_name]
 
 
 def _daily_formula_owned(book, data: bytes, sheet_name: str) -> bool:
