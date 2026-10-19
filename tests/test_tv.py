@@ -202,10 +202,15 @@ class TvUiTests(unittest.TestCase):
         script = (ROOT / "ui" / "app.js").read_text(encoding="utf-8")
         home = page.split('id="view-home"', 1)[1].split("</section>", 1)[0]
         self.assertIn('id="tv-card"', home)
-        for marker in ('data-tv-action="on"', 'data-tv-action="off"', 'data-tv-input="livetv"',
-                       'data-tv-input="cable"', 'data-tv-input="dashboard"', 'data-tv-input="soundbar"',
+        for marker in ('data-tv-action="on"', 'data-tv-action="off"',
+                       'data-tv-input="cable"', 'data-tv-input="dashboard"',
                        'id="tv-resync-send"', 'id="tv-status"'):
             self.assertIn(marker, home)
+        self.assertNotIn('data-tv-input="soundbar"', home)
+        self.assertNotIn('data-tv-input="livetv"', home)
+        self.assertNotIn('<option value="soundbar">', home)
+        self.assertIn('data-tv-input="cable">HDMI 3', home)
+        self.assertIn('data-tv-input="dashboard">HDMI 2', home)
         self.assertLess(home.index('id="tv-card"'), home.index('id="home-controls"'))
         self.assertIn('fetch("/api/tv/status", { cache: "no-store" })', script)
         self.assertIn('fetch("/api/tv/action", {', script)
