@@ -37,6 +37,11 @@ IDENTITY = {
 OPTIONAL_IDENTITY = {"Measurements": {"external_id"}}
 ATTRIBUTION = ("source", "updated_by", "recorded_at")
 REQUIRED_PATCH = ("source", "updated_by", "recorded_at", "reason")
+# Row provenance: where a reading came from and when it was first recorded. A correction keeps it;
+# only an explicit provenance repair (reason starting with PROVENANCE_REPAIR) may rewrite it.
+PROVENANCE = ("source", "recorded_at")
+PROVENANCE_REPAIR = "provenance-repair"
+REPAIR_FIELDS = frozenset({"source", "recorded_at", "updated_by"})
 DATE_EXACT = {"date"}
 
 
@@ -155,6 +160,13 @@ class WriteStore:
         unknown = set(fields).difference(headers)
         if unknown:
             raise WorkbookWriteError("unknown_field", "Unknown field: " + ", ".join(sorted(unknown)))
+        reason = record["reason"].strip()
+        repair = reason.casefold().startswith(PROVENANCE_REPAIR)
+        if repair:
+            # A provenance repair is metadata-only: it may not touch measured values.
+            data_fields = sorted(set(fields).difference(REPAIR_FIELDS))
+            if data_fields:
+                raise WorkbookWriteError("repair_fields_only", "A provenance-repair may only set source, recorded_at, updated_by; got: " + ", ".join(data_fields))
         attribution = _sheet_values(sheet_name, {**fields, **record}, ATTRIBUTION)
         changes = {key: attribution[key] for key in fields if key in attribution}
         for key, value in fields.items():
@@ -162,16 +174,22 @@ class WriteStore:
                 changes[key] = None
         # day_status is bookkeeping, not data ownership: a status-only PATCH keeps the row's updated_by
         # (feeders use updated_by to decide who owns weight_lb). The audit log still records the actor.
+        # A provenance repair likewise keeps updated_by unless fields names it explicitly.
         status_only = set(fields) == {formulas.STATUS}
+        keep_updated_by = status_only or (repair and "updated_by" not in fields)
         for key in ("updated_by", "recorded_at", "source"):
-            if key in headers and not (status_only and key == "updated_by"):
+            if key in headers and not (keep_updated_by and key == "updated_by"):
                 changes[key] = attribution[key]
         row_id = canonical_row_id(sheet_name, row_id)
         with self._locked() as connection:
             current = self._read()
             _guard_daily(current, sheet_name, {key: fields[key] for key in fields})
             _guard_fiber(current, sheet_name, fields)
-            probe = {**row_values(current, sheet_name, row_id), **changes}
+            stored = row_values(current, sheet_name, row_id)
+            kept = _keep_provenance(stored, changes, attribution, fields, headers, repair)
+            if kept:
+                reason = f"{reason} [row provenance kept: {', '.join(kept)}; edit recorded_at={attribution['recorded_at']}, edit source={attribution['source']}]"
+            probe = {**stored, **changes}
             existing = _existing_row(current, sheet_name, probe)
             if existing and existing != row_id:
                 raise WorkbookWriteError("conflict", f"{sheet_name} identity belongs to another row.", existing)
@@ -179,7 +197,7 @@ class WriteStore:
             self._check(new_bytes, sheet_name)
             after = {**before, **changes}
             backup = self._commit(connection, current, new_bytes, _audit(
-                "correct", sheet_name, row_id, attribution, before, after, record["reason"].strip(),
+                "correct", sheet_name, row_id, attribution, before, after, reason,
             ))
             return {"result": "updated", "row_id": row_id, "sheet": sheet_name, "backup": backup.name}
 
@@ -401,6 +419,38 @@ def _existing_row(data: bytes, sheet_name: str, values: dict) -> str | None:
             raise WorkbookWriteError("missing_field", "Required: " + key)
         identity[key] = values[key]
     return find_row(data, sheet_name, identity)
+
+
+def _keep_provenance(stored: dict, changes: dict, attribution: dict, fields: dict, headers: set[str], repair: bool) -> list[str]:
+    """Keep a row's original source/recorded_at on a correction. Returns the provenance keys kept.
+
+    The stored value wins unless: this is an explicit provenance repair; the stored cell is blank (fill it);
+    or the same writer is updating its own row (same source and updated_by), which is how feeders refresh
+    their rows, so feeder behaviour is unchanged. Asking to change provenance in fields without a repair
+    reason is refused rather than silently ignored.
+    """
+    if repair:
+        return []
+    same_writer = (
+        _same(stored.get("source"), attribution.get("source"))
+        and _same(stored.get("updated_by"), attribution.get("updated_by"))
+    )
+    kept = []
+    for key in PROVENANCE:
+        if key not in headers or key not in changes:
+            continue
+        current = stored.get(key)
+        if current in (None, "") or same_writer:
+            continue
+        if key in fields and not _same(current, changes[key]):
+            raise WorkbookWriteError(
+                "provenance_locked",
+                f"{key} is row provenance; start reason with '{PROVENANCE_REPAIR}:' to change it",
+            )
+        del changes[key]
+        if not _same(current, attribution.get(key)):
+            kept.append(key)
+    return kept
 
 
 def _payload_matches(data: bytes, sheet_name: str, row_id: str, values: dict) -> bool:

@@ -144,6 +144,110 @@ class MeasurementWriteTests(unittest.TestCase):
         self.assertEqual(json.loads(correction["after_json"])["value"], 108)
         self.assertEqual(self.daily_sheet(), self.daily_before)
 
+    def _seed_marble_row(self):
+        """A feeder-owned reading, as measurements:159-168 were before the Oct 9 edit."""
+        status, body = self.request("POST", "/v1/measurements", measurement(
+            metric="weight", value=204.3, unit="lb", source="WITHINGS", device="BODY_SMART",
+            external_id="withings:1:weight", updated_by="withings-sync", recorded_at="2026-10-05T19:37:40Z",
+        ))
+        self.assertEqual(status, 201, body)
+        return body["row_id"]
+
+    def _row(self, row_id):
+        return next(row for row in self.request("GET", "/v1/sheets/measurements")[1]["rows"] if row["row_id"] == row_id)
+
+    def test_correction_by_another_writer_keeps_row_provenance(self):
+        row_id = self._seed_marble_row()
+        status, body = self.request("PATCH", "/v1/measurements/" + row_id, {
+            "source": "USER", "updated_by": "Goggins", "recorded_at": "2026-10-09T20:36:00-07:00",
+            "reason": "Flag Oct 5 marble-floor weigh-in as invalid per K JA",
+            "fields": {"notes": "INVALID: marble floor"},
+        })
+        self.assertEqual(status, 200, body)
+        row = self._row(row_id)
+        self.assertEqual(row["source"], "WITHINGS")
+        self.assertEqual(row["recorded_at"], "2026-10-05T19:37:40Z")
+        self.assertEqual(row["updated_by"], "Goggins")
+        self.assertEqual(row["notes"], "INVALID: marble floor")
+        self.assertEqual(row["value"], 204.3)
+        entry = WriteStore(self.path).audit_entries()[-1]
+        self.assertEqual(entry["actor"], "Goggins")
+        self.assertEqual(entry["source"], "USER")
+        self.assertIn("row provenance kept: source, recorded_at", entry["reason"])
+        self.assertIn("edit recorded_at=2026-10-09T20:36:00-07:00", entry["reason"])
+        before, after = json.loads(entry["before_json"]), json.loads(entry["after_json"])
+        self.assertEqual(before["source"], "WITHINGS")
+        self.assertEqual(after["source"], "WITHINGS")
+        self.assertEqual(after["recorded_at"], "2026-10-05T19:37:40Z")
+        self.assertIsNone(before["notes"])
+        # the Withings feeder still finds its row by (source, external_id): no duplicate identity
+        status, replay = self.request("POST", "/v1/measurements", measurement(
+            metric="weight", value=204.3, unit="lb", source="WITHINGS", device="BODY_SMART",
+            external_id="withings:1:weight", updated_by="withings-sync", recorded_at="2026-10-05T19:37:40Z",
+        ))
+        self.assertIn(status, (200, 409), replay)
+        self.assertEqual(replay.get("row_id"), row_id)
+
+    def test_same_writer_correction_still_refreshes_recorded_at(self):
+        row_id = self._seed_marble_row()
+        status, body = self.request("PATCH", "/v1/measurements/" + row_id, {
+            "source": "WITHINGS", "updated_by": "withings-sync", "recorded_at": "2026-10-06T10:00:00Z",
+            "reason": "withings-sync", "fields": {"value": 204.4},
+        })
+        self.assertEqual(status, 200, body)
+        row = self._row(row_id)
+        self.assertEqual(row["recorded_at"], "2026-10-06T10:00:00Z")
+        self.assertEqual(row["value"], 204.4)
+        self.assertEqual(WriteStore(self.path).audit_entries()[-1]["reason"], "withings-sync")
+
+    def test_changing_provenance_without_repair_reason_is_refused(self):
+        row_id = self._seed_marble_row()
+        before = self.path.read_bytes()
+        status, body = self.request("PATCH", "/v1/measurements/" + row_id, {
+            "source": "USER", "updated_by": "Goggins", "recorded_at": "2026-10-09T20:36:00-07:00",
+            "reason": "relabel", "fields": {"source": "USER"},
+        })
+        self.assertEqual(body["error"], "provenance_locked", body)
+        self.assertGreaterEqual(status, 400)
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_provenance_repair_restores_metadata_only_and_is_not_skipped(self):
+        row_id = self._seed_marble_row()
+        # simulate the Oct 9 damage with the old behaviour: a repair-mode write that flips provenance
+        self.request("PATCH", "/v1/measurements/" + row_id, {
+            "source": "USER", "updated_by": "Goggins", "recorded_at": "2026-10-09T20:36:00-07:00",
+            "reason": "provenance-repair: simulate damage", "fields": {"source": "USER", "recorded_at": "2026-10-09T20:36:00-07:00", "updated_by": "Goggins"},
+        })
+        damaged = self._row(row_id)
+        self.assertEqual((damaged["source"], damaged["updated_by"]), ("USER", "Goggins"))
+        status, body = self.request("PATCH", "/v1/measurements/" + row_id, {
+            "source": "WITHINGS", "updated_by": "grok-bot", "recorded_at": "2026-10-05T19:37:40Z",
+            "reason": "provenance-repair: restore original Withings provenance (audit 522)",
+            "fields": {"source": "WITHINGS", "recorded_at": "2026-10-05T19:37:40Z"},
+        })
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["result"], "updated")
+        row = self._row(row_id)
+        self.assertEqual(row["source"], "WITHINGS")
+        self.assertEqual(row["recorded_at"], "2026-10-05T19:37:40Z")
+        self.assertEqual(row["updated_by"], "Goggins")
+        self.assertEqual(row["value"], 204.3)
+        entry = WriteStore(self.path).audit_entries()[-1]
+        self.assertEqual(entry["actor"], "grok-bot")
+        self.assertEqual(json.loads(entry["before_json"])["source"], "USER")
+        self.assertEqual(json.loads(entry["after_json"])["source"], "WITHINGS")
+        self.assertEqual(json.loads(entry["after_json"])["updated_by"], "Goggins")
+
+    def test_provenance_repair_refuses_data_fields(self):
+        row_id = self._seed_marble_row()
+        before = self.path.read_bytes()
+        status, body = self.request("PATCH", "/v1/measurements/" + row_id, {
+            "source": "WITHINGS", "updated_by": "grok-bot", "recorded_at": "2026-10-05T19:37:40Z",
+            "reason": "provenance-repair: sneak a value", "fields": {"source": "WITHINGS", "value": 1},
+        })
+        self.assertEqual(body["error"], "repair_fields_only", body)
+        self.assertEqual(self.path.read_bytes(), before)
+
     def test_read_token_and_anonymous_writes_are_rejected(self):
         before = self.path.read_bytes()
         status, body = self.request("POST", "/v1/measurements", measurement(), token=None)
@@ -353,6 +457,28 @@ class MeasurementWriteTests(unittest.TestCase):
             list(TABLE_HEADERS["Measurements"]),
         )
         self.assertEqual(add_measurements_sheet.__name__, "add_measurements_sheet")
+
+    def test_training_correction_keeps_source_and_repair_restores_it(self):
+        body = self._attributed({"date": "2026-10-06", "session_id": "2026-10-06-treadmill-console", "source": "MANUAL",
+                                 "type": "treadmill incline walk", "start_local": "~11:41 AM", "updated_by": "Goggins"})
+        status, created = self.request("POST", "/v1/training", body)
+        self.assertEqual(status, 201, created)
+        row_id = created["row_id"]
+        status, patched = self.request("PATCH", "/v1/training/" + row_id, {
+            "source": "USER", "updated_by": "Goggins", "recorded_at": "2026-10-09T20:26:00-07:00",
+            "reason": "Correct start time", "fields": {"start_local": "11:39 AM"},
+        })
+        self.assertEqual(status, 200, patched)
+        row = next(r for r in self.request("GET", "/v1/rows?sheet=training&date=2026-10-06&limit=5")[1]["rows"] if r["row_id"] == row_id)
+        self.assertEqual(row["source"], "MANUAL")
+        self.assertEqual(row["start_local"], "11:39 AM")
+        status, repaired = self.request("PATCH", "/v1/training/" + row_id, {
+            "source": "MANUAL", "updated_by": "grok-bot", "recorded_at": "2026-10-06T12:43:00-07:00",
+            "reason": "provenance-repair: no-op check", "fields": {"source": "MANUAL"},
+        })
+        self.assertEqual(status, 200, repaired)
+        row = next(r for r in self.request("GET", "/v1/rows?sheet=training&date=2026-10-06&limit=5")[1]["rows"] if r["row_id"] == row_id)
+        self.assertEqual((row["source"], row["updated_by"]), ("MANUAL", "Goggins"))
 
     def test_public_row_id_updates_without_duplicating_the_identity(self):
         body = self._attributed({"date": "2026-04-01", "steps": 100, "hrv_ms": 40, "source": "FITBIT"})
