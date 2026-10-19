@@ -1263,6 +1263,114 @@
     }
   }
 
+  const TV_INPUT_LABELS = { livetv: "Live TV", cable: "Cable", dashboard: "Dashboard", soundbar: "Soundbar" };
+  let tvPending = null;
+
+  function tvLabel(name) {
+    return TV_INPUT_LABELS[name] || "unknown";
+  }
+
+  function setTvButtons(disabled) {
+    const card = document.getElementById("tv-card");
+    if (!card || typeof card.querySelectorAll !== "function") return;
+    card.querySelectorAll("button, select").forEach(function (node) { node.disabled = disabled; });
+  }
+
+  function renderTv(view) {
+    if (tvPending) return;
+    if (!view || view.available !== true) {
+      setText("tv-status", "TV UNKNOWN / OFFLINE" + (view && view.reason ? " · " + view.reason : ""));
+      setTvButtons(false);
+      return;
+    }
+    const power = view.power === "on" ? "On"
+      : view.power === "standby" ? "Off (standby)"
+      : view.power === "unknown" ? "unknown" : "Off or unreachable";
+    setText("tv-status", "Power: " + power + " · Input: " + tvLabel(view.input) + (view.busy ? " · busy" : ""));
+    setTvButtons(view.busy === true);
+  }
+
+  async function refreshTv() {
+    if (tvPending) return null;
+    try {
+      const response = await fetch("/api/tv/status", { cache: "no-store" });
+      const view = response.ok ? await response.json() : null;
+      renderTv(view);
+      return view;
+    } catch (err) {
+      renderTv(null);
+      return null;
+    }
+  }
+
+  function tvDoneText(body, result) {
+    if (body.action === "on") return result && result.woke ? "TV turned on" : "TV was already on";
+    if (body.action === "off") {
+      return result && result.note === "already_off_or_standby" ? "TV already off or in standby" : "TV off sent";
+    }
+    if (body.action === "resync") return "Pi now remembers " + tvLabel(body.input) + " (no keys sent)";
+    const presses = result && result.key_hdmi_presses != null ? " · " + result.key_hdmi_presses + " HDMI presses" : "";
+    return "Switched to " + tvLabel(body.input) + presses;
+  }
+
+  async function postTv(body, pendingText) {
+    if (tvPending) return;
+    tvPending = pendingText;
+    setTvButtons(true);
+    setText("tv-status", pendingText);
+    setText("tv-result", pendingText);
+    let message;
+    try {
+      const response = await fetch("/api/tv/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      if (payload && payload.accepted === true) {
+        message = "Done: " + tvDoneText(body, payload.result || {});
+      } else {
+        message = "Not done: " + ((payload && payload.reason) || "rejected");
+      }
+    } catch (err) {
+      message = "Not done: TV UNKNOWN / OFFLINE";
+    }
+    tvPending = null;
+    setText("tv-result", message);
+    await refreshTv();
+  }
+
+  function homeViewActive() {
+    const view = document.getElementById("view-home");
+    return !!(view && view.classList && typeof view.classList.contains === "function" && view.classList.contains("active"));
+  }
+
+  function bindTv() {
+    const card = document.getElementById("tv-card");
+    if (!card || typeof card.querySelectorAll !== "function") return;
+    card.querySelectorAll("[data-tv-action]").forEach(function (button) {
+      if (!button.addEventListener) return;
+      button.addEventListener("click", function () {
+        const action = button.getAttribute("data-tv-action");
+        postTv({ action: action }, action === "on" ? "Turning TV on (up to a minute)..." : "Turning TV off...");
+      });
+    });
+    card.querySelectorAll("[data-tv-input]").forEach(function (button) {
+      if (!button.addEventListener) return;
+      button.addEventListener("click", function () {
+        const name = button.getAttribute("data-tv-input");
+        postTv({ action: "input", input: name }, "Switching to " + tvLabel(name) + " (up to a minute if the TV is off)...");
+      });
+    });
+    const resync = document.getElementById("tv-resync-send");
+    const select = document.getElementById("tv-resync-input");
+    if (resync && resync.addEventListener && select) {
+      resync.addEventListener("click", function () {
+        postTv({ action: "resync", input: select.value }, "Saving input " + tvLabel(select.value) + "...");
+      });
+    }
+  }
+
   async function refreshHome() {
     try {
       const response = await fetch("/api/home/entities", { cache: "no-store" });
@@ -1505,6 +1613,7 @@
     document.querySelectorAll(".nav-button").forEach(function (button) {
       button.classList.toggle("active", button.getAttribute("data-view") === name);
     });
+    if (name === "home") refreshTv();
   }
 
   if (document.querySelectorAll) {
@@ -1551,6 +1660,7 @@
       renderSnapshot(snap, eventsPayload);
       refreshPerception();
       refreshHome();
+      if (homeViewActive()) refreshTv();
       refreshMissions();
       els.fetchError.classList.add("hidden");
       els.refreshBadge.textContent = "refresh " + Math.round(REFRESH_MS / 1000) + "s";
@@ -1575,6 +1685,7 @@
   }
 
   bindSnapshotActions();
+  bindTv();
   tick();
   setInterval(tick, REFRESH_MS);
   refreshWorkouts();

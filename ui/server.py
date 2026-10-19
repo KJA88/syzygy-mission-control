@@ -5,6 +5,8 @@ Serves static UI assets and Guardian outputs (snapshot.json + events.jsonl).
 Named skill requests and the engineering JSON path are served on this same
 server. Does not probe Guardian MCP catalogs. Read-only workout summaries may
 call the local Fitbit MCP at 127.0.0.1:8010 and do not receive OAuth tokens.
+TV power and input requests go only to the loopback tv-mcp (127.0.0.1:8065)
+through home/tv.py; Mission Control never holds the TV token.
 
 The origin stays on the Pi. A phone may reach only this UI through the
 dedicated Cloudflare Access hostname and tunnel. Do not publish port 9070
@@ -281,6 +283,15 @@ def _mission_post(missions, path, payload):
     return missions.start(payload.get("mission"), operator=payload.get("operator"))
 
 
+def _tv_from_env():
+    try:
+        from home.tv import open_tv
+        return open_tv()
+    except Exception as exc:
+        sys.stderr.write("tv control unavailable: %s\n" % (type(exc).__name__,))
+        return None
+
+
 def _workouts_from_env():
     try:
         from workouts.fitbit import open_fitbit
@@ -340,7 +351,7 @@ def relay_stream(destination, upstream, chunk_size=8192):
             closer()
 
 
-def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None, missions=None, workouts=None):
+def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit: int, owner=None, vision=None, home=None, missions=None, workouts=None, tv=None):
     snapshot_path = state_dir / "snapshot.json"
     events_path = state_dir / "events.jsonl"
 
@@ -428,6 +439,10 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                     payload.get("action"),
                     payload.get("brightness"),
                 ))
+            if parsed.path == "/api/tv/action":
+                if tv is None:
+                    return self._json(200, {"accepted": False, "reason": "TV_UNCONFIGURED"})
+                return self._json(200, tv.act(payload.get("action"), payload.get("input")))
             if parsed.path in ("/api/missions/start", "/api/missions/stop"):
                 return self._json(200, _mission_post(missions, parsed.path, payload))
             if parsed.path.startswith("/api/workouts/"):
@@ -489,6 +504,10 @@ def make_handler(state_dir: Path, ui_dir: Path, hard_stale: float, events_limit:
                 if home is None:
                     return self._json(200, _home_down())
                 return self._json(200, home.entity_view())
+            if path == "/api/tv/status":
+                if tv is None:
+                    return self._json(200, {"available": False, "reason": "TV_UNCONFIGURED", "busy": False})
+                return self._json(200, tv.status())
             if path == "/api/home/status":
                 if home is None:
                     return self._json(200, {"available": False, "reason": "HA_UNCONFIGURED", "ui_url": None, "counts": {}})
@@ -724,7 +743,7 @@ def main(argv=None):
     threading.Thread(target=heartbeat_loop, name="control-owner-heartbeat", daemon=True).start()
     handler = make_handler(
         state_dir, ui_dir, args.hard_stale_s, args.events_limit,
-        owner, vision, home, missions, _workouts_from_env(),
+        owner, vision, home, missions, _workouts_from_env(), tv=_tv_from_env(),
     )
     httpd = ThreadingHTTPServer((args.host, args.port), handler)
     sys.stderr.write(

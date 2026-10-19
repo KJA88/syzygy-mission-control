@@ -1,5 +1,5 @@
 /* Static shell only. Live operational data stays on the network. */
-const CACHE = "syzygy-shell-v1";
+const CACHE = "syzygy-shell-v4";
 const SHELL = [
   "/",
   "/index.html",
